@@ -7,6 +7,11 @@
 //   POST /api/tasks    -> body is the ENTIRE tasks array; 200 OK on write
 //   GET  /api/library  -> JSON array of library entries
 //   POST /api/library  -> body is the ENTIRE library array; 200 OK on write
+//   GET  /api/workflow -> JSON array of workflow states
+//   POST /api/workflow -> body is the ENTIRE workflow array; 200 OK on write
+//   GET  /api/lanes    -> JSON array of lanes
+//   POST /api/lanes    -> body is the ENTIRE lanes array; 200 OK on write
+//   POST /api/lanes/delete -> { laneId, replacementLaneId } -> safe delete
 
 export async function getTasks() {
   const res = await fetch('/api/tasks');
@@ -34,14 +39,11 @@ export async function saveLibrary(library) {
   });
 }
 
-// ---------- workflow routes ----------
 export async function getWorkflow() {
   const res = await fetch('/api/workflow');
   return res.json();
 }
 
-// Whole-array replace. Send the full workflow array; persists and returns the
-// saved array.
 export async function saveWorkflow(workflow) {
   return fetch('/api/workflow', {
     method: 'POST',
@@ -50,13 +52,31 @@ export async function saveWorkflow(workflow) {
   });
 }
 
-// Delete a single state. If the state still has cards, the backend requires a
-// `destination` state id (sent as the request body) to reassign them to.
-export async function deleteWorkflowState(id, destination) {
-  const opts = {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' }
-  };
-  if (destination) opts.body = JSON.stringify({ destination });
-  return fetch(`/api/workflow/${encodeURIComponent(id)}`, opts);
+export async function deleteWorkflowState(stateId, replacementStateId) {
+  return fetch('/api/workflow/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stateId, replacementStateId })
+  });
+}
+
+export async function getLanes() {
+  const res = await fetch('/api/lanes');
+  return res.json();
+}
+
+export async function saveLanes(lanes) {
+  return fetch('/api/lanes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(lanes)
+  });
+}
+
+export async function deleteLane(laneId, replacementLaneId) {
+  return fetch('/api/lanes/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ laneId, replacementLaneId })
+  });
 }

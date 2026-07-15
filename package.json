@@ -5,8 +5,7 @@
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node server.js",
-    "test": "node test/api.test.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.19.2"

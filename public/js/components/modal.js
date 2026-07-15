@@ -5,42 +5,12 @@
 
 function getEl(id){ return document.getElementById(id); }
 
-function escapeHtml(s){
-  return (s||'').replace(/[&<>"']/g, c => {
-    switch(c){
-      case '&':  return '&' + 'amp;';
-      case '<':  return '&' + 'lt;';
-      case '>':  return '&' + 'gt;';
-      case '"':  return '&' + 'quot;';
-      case "'":  return '&' + '#39;';
-    }
-    return c;
-  });
-}
-
 let _confirmCallback = null;
-let _confirmOpts = {};
 
-// askConfirm(message, onConfirm, opts?)
-//   opts.destinationOptions: optional array of { id, name } — when provided, a
-//   destination <select> is shown in the confirm dialog and the chosen value is
-//   passed to onConfirm(dest) so the caller can reassign referenced items.
-export function askConfirm(message, onConfirm, opts = {}){
+export function askConfirm(message, onConfirm){
   const msgEl = getEl('confirmMessage');
   if(msgEl) msgEl.textContent = message;
   _confirmCallback = onConfirm;
-  _confirmOpts = opts || {};
-  const destWrap = getEl('confirmDestWrap');
-  const destSel = getEl('confirmDest');
-  if(destWrap && destSel){
-    if(_confirmOpts.destinationOptions && _confirmOpts.destinationOptions.length){
-      destSel.innerHTML = _confirmOpts.destinationOptions
-        .map(o=>`<option value="${escapeHtml(o.id)}">${escapeHtml(o.name)}</option>`).join('');
-      destWrap.style.display = 'block';
-    } else {
-      destWrap.style.display = 'none';
-    }
-  }
   const ov = getEl('confirmOverlay');
   if(ov) ov.classList.add('show');
 }
@@ -49,9 +19,6 @@ export function closeConfirm(){
   const ov = getEl('confirmOverlay');
   if(ov) ov.classList.remove('show');
   _confirmCallback = null;
-  _confirmOpts = {};
-  const destWrap = getEl('confirmDestWrap');
-  if(destWrap) destWrap.style.display = 'none';
 }
 
 export function showToast(msg){
@@ -75,7 +42,7 @@ export function flashStatus(msg){
 // ---- wiring (module is deferred, so the DOM is already parsed) ----
 
 // click-outside-to-close for all overlays
-['taskModalOverlay', 'libModalOverlay', 'confirmOverlay'].forEach(id=>{
+['taskModalOverlay', 'libModalOverlay', 'workflowModalOverlay', 'lanesModalOverlay', 'confirmOverlay'].forEach(id=>{
   const ov = getEl(id);
   if(ov) ov.addEventListener('click', (e)=>{ if(e.target === ov) ov.classList.remove('show'); });
 });
@@ -83,14 +50,7 @@ export function flashStatus(msg){
 // confirm dialog buttons
 const confirmBtn = getEl('confirmDeleteBtn');
 if(confirmBtn) confirmBtn.addEventListener('click', ()=>{
-  if(_confirmCallback){
-    let dest = null;
-    const destSel = getEl('confirmDest');
-    if(destSel && _confirmOpts.destinationOptions && _confirmOpts.destinationOptions.length){
-      dest = destSel.value;
-    }
-    _confirmCallback(dest);
-  }
+  if(_confirmCallback) _confirmCallback();
   closeConfirm();
 });
 const confirmCancel = getEl('confirmCancelBtn');

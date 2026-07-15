@@ -4,13 +4,13 @@
 //
 // Responsibilities of THIS file (Phase C1):
 //   - Hold the single global `state` object.
-//   - Load the workflow states (kanban stages) from the backend and expose
-//     getWorkflow()/setWorkflow() getters (the old hardcoded COLUMNS is gone).
+//   - Define the kanban `COLUMNS` array once and export it.
+//   - Define the `LANES` array once and export it.
 //   - Load data from the backend via api.js and bootstrap the app (initApp).
 //   - Re-render all views (renderAll) by delegating to component modules.
 //   - Wire tab routing and the board/library filter inputs.
-//   - Provide persistence wrappers (saveTasks / saveLibrary) that call api.js
-//     and surface a status flash.
+//   - Provide persistence wrappers (saveTasks / saveLibrary / saveWorkflow /
+//     saveLanes / deleteLane) that call api.js and surface a status flash.
 //
 // ============================================================================
 // COMPONENT MODULE INTERFACE CONTRACT (Phase C2 must fulfill these EXACT
@@ -25,14 +25,15 @@
 //
 // ./components/board.js
 //   renderBoard(state, ctx)
-//       Renders the kanban board into #boardEl from state.tasks, honoring the
-//       #boardSearch filter value. Must ATTACH event listeners (drag/drop,
-//       card click -> openTaskModal, "+ add" buttons) — do NOT rely on the
-//       inline onclick="" handlers left in public/index.html; those reference
-//       globals that no longer exist. Use ctx for cross-cutting actions.
-//   openTaskModal(id, defaultColumn, ctx)
+//       Renders the kanban swimlane grid into #boardEl from state.tasks,
+//       honoring the #boardSearch filter value. Each cell is keyed by
+//       (laneId, colId). Must ATTACH event listeners (drag/drop, card click ->
+//       openTaskModal, "+ add" buttons) — do NOT rely on inline onclick=""
+//       handlers. Use ctx for cross-cutting actions.
+//   openTaskModal(id, defaultColumn, ctx, defaultLane)
 //       Opens #taskModalOverlay, populates the form from state.tasks[id] (or
-//       blanks it for a new task in `defaultColumn`). Sets state.currentTaskId.
+//       blanks it for a new task in `defaultColumn`/`defaultLane`).
+//       Sets state.currentTaskId.
 //   closeTaskModal(ctx)
 //       Hides #taskModalOverlay and clears state.currentTaskId.
 //   saveTaskFromModal(ctx)
@@ -43,7 +44,7 @@
 //       on confirm removes the task from state.tasks, ctx.saveTasks(),
 //       ctx.renderAll(), closeTaskModal.
 //   (drag-and-drop handlers are internal to board.js but must call
-//    ctx.saveTasks() + ctx.renderAll() on a successful column change.)
+//    ctx.saveTasks() + ctx.renderAll() on a successful cell change.)
 //
 // ./components/library.js
 //   renderLibrary(state, ctx)
@@ -67,16 +68,19 @@
 //   askConfirm(message, onConfirm)
 //       Shows #confirmOverlay with `message`; wires #confirmDeleteBtn to call
 //       onConfirm() once. This is the ONLY sanctioned path for destructive
-//       actions (delete task / delete library entry).
+//       actions (delete task / delete library entry / delete lane).
 //   closeConfirm()
 //       Hides #confirmOverlay and clears the pending callback.
 //   showToast(msg)
 //       Transient toast via #toast.
 //   flashStatus(msg)
 //       Transient "saved" pill via #statusPill.
-//   (modal.js is also responsible for wiring #confirmDeleteBtn and the
-//    click-outside-to-close behavior on #taskModalOverlay / #libModalOverlay /
-//    #confirmOverlay, replacing the old inline handlers.)
+//
+// ./components/workflow.js
+//   initWorkflow(ctx) — wires static buttons; captures ctxRef.
+//
+// ./components/lanes.js
+//   initLanes(ctx) — wires static buttons; captures ctxRef.
 //
 // ----------------------------------------------------------------------------
 // HOW COMPONENTS GET WHAT THEY NEED (no circular imports):
@@ -84,8 +88,8 @@
 //     './modal.js' (modal.js imports nothing from app.js or the other
 //     components, so there is no cycle).
 //   - Components receive `ctx` (built below) for the app-level actions that
-//     live in app.js: { state, getWorkflow, setWorkflow, saveTasks,
-//     saveLibrary, saveWorkflow, renderAll }.
+//     live in app.js: { state, COLUMNS, LANES, saveTasks, saveLibrary,
+//     saveWorkflow, deleteWorkflowState, saveLanes, deleteLane, renderAll }.
 //   - Components therefore NEVER import from app.js, avoiding a cycle.
 // ----------------------------------------------------------------------------
 
@@ -94,8 +98,12 @@ import {
   saveTasks as apiSaveTasks,
   getLibrary,
   saveLibrary as apiSaveLibrary,
-  getWorkflow as apiGetWorkflow,
-  saveWorkflow as apiSaveWorkflow
+  getWorkflow,
+  saveWorkflow as apiSaveWorkflow,
+  deleteWorkflowState as apiDeleteWorkflowState,
+  getLanes,
+  saveLanes as apiSaveLanes,
+  deleteLane as apiDeleteLane
 } from './api.js';
 import { renderDashboard } from './components/dashboard.js';
 import {
@@ -113,25 +121,25 @@ import {
   deleteCurrentLib,
   copyLibBody
 } from './components/library.js';
-import { renderWorkflow } from './components/workflow.js';
 import { askConfirm, closeConfirm, showToast, flashStatus } from './components/modal.js';
+import { initWorkflow } from './components/workflow.js';
+import { initLanes } from './components/lanes.js';
 
-// Workflow states (kanban stages) are loaded from the backend (GET /api/workflow)
-// and held here as the single source of truth — they are no longer hardcoded.
-// Components read them via getWorkflow() and mutate via setWorkflow(); the `ctx`
-// object threads both into components so they never import app.js directly
-// (avoids a circular dependency). Keep the named-export style used for the old
-// COLUMNS so importers that expect a getter keep working.
-let workflow = [];
+// Kanban stages — defined ONCE here and exported for board.js / modal.js reuse.
+// Do not hardcode column ids anywhere else.
+export const COLUMNS = [];
 
-export function getWorkflow(){ return workflow; }
-export function setWorkflow(w){ workflow = Array.isArray(w) ? w : []; }
+// Swimlanes — defined ONCE here, exported for board.js / lanes.js reuse.
+// Populated from /api/lanes on boot.
+export const LANES = [];
 
 // Single global application state. Mutated in place by component controllers;
 // never reassigned wholesale (so imported references stay valid).
 export const state = {
   tasks: [],
   library: [],
+  workflow: COLUMNS,  // alias kept for backward compat
+  lanes: LANES,       // alias kept in sync with the exported array
   currentTaskId: null,
   currentLibId: null,
 };
@@ -141,11 +149,14 @@ export const state = {
 // importing app.js (prevents a circular dependency).
 const ctx = {
   state,
-  getWorkflow,
-  setWorkflow,
+  COLUMNS,
+  LANES,
   saveTasks,
   saveLibrary,
   saveWorkflow,
+  deleteWorkflowState,
+  saveLanes,
+  deleteLane,
   renderAll,
 };
 
@@ -173,17 +184,55 @@ export async function saveLibrary() {
   }
 }
 
-// Persist the current workflow array (whole-array replace) and sync the in-
-// memory copy with whatever the server returns (it echoes the saved array).
-export async function saveWorkflow() {
+export async function saveWorkflow(workflow) {
   try {
-    const res = await apiSaveWorkflow(getWorkflow());
-    if (!res.ok) throw new Error('workflow save failed');
-    const saved = await res.json();
-    if (Array.isArray(saved)) setWorkflow(saved);
+    const res = await apiSaveWorkflow(workflow);
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: body.error };
     flashStatus('saved');
+    return { ok: true };
   } catch (e) {
     flashStatus('save failed');
+    return { ok: false, error: 'could not save workflow' };
+  }
+}
+
+export async function deleteWorkflowState(stateId, replacementStateId) {
+  try {
+    const res = await apiDeleteWorkflowState(stateId, replacementStateId);
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: body.error };
+    flashStatus('saved');
+    return { ok: true, workflow: body.workflow };
+  } catch (e) {
+    flashStatus('save failed');
+    return { ok: false, error: 'could not delete workflow state' };
+  }
+}
+
+export async function saveLanes(lanes) {
+  try {
+    const res = await apiSaveLanes(lanes);
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: body.error };
+    flashStatus('saved');
+    return { ok: true };
+  } catch (e) {
+    flashStatus('save failed');
+    return { ok: false, error: 'could not save lanes' };
+  }
+}
+
+export async function deleteLane(laneId, replacementLaneId) {
+  try {
+    const res = await apiDeleteLane(laneId, replacementLaneId);
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: body.error };
+    flashStatus('saved');
+    return { ok: true, lanes: body.lanes };
+  } catch (e) {
+    flashStatus('save failed');
+    return { ok: false, error: 'could not delete lane' };
   }
 }
 
@@ -191,19 +240,31 @@ export async function saveWorkflow() {
 
 export async function initApp() {
   try {
-    const [tasks, library, wf] = await Promise.all([
-      getTasks(),
-      getLibrary(),
-      apiGetWorkflow()
+    const [tasks, library, workflow, lanes] = await Promise.all([
+      getTasks(), getLibrary(), getWorkflow(), getLanes()
     ]);
     state.tasks = Array.isArray(tasks) ? tasks : [];
     state.library = Array.isArray(library) ? library : [];
-    setWorkflow(Array.isArray(wf) ? wf : []);
+    COLUMNS.splice(0, COLUMNS.length, ...(Array.isArray(workflow) ? workflow : []));
+    LANES.splice(0, LANES.length, ...(Array.isArray(lanes) ? lanes : []));
+
+    // Migration guard: assign laneId = 'general' to any task that predates
+    // the swimlane feature, then persist so the fix survives a reload.
+    const defaultLaneId = LANES[0]?.id || 'general';
+    let needsMigration = false;
+    state.tasks.forEach(t => {
+      if (!t.laneId) {
+        t.laneId = defaultLaneId;
+        needsMigration = true;
+      }
+    });
+    if (needsMigration) {
+      try { await apiSaveTasks(state.tasks); } catch (_) { /* non-fatal */ }
+    }
   } catch (e) {
     showToast('failed to load data');
     state.tasks = [];
     state.library = [];
-    setWorkflow([]);
   }
   renderAll();
 }
@@ -212,7 +273,6 @@ export function renderAll() {
   renderDashboard(state, ctx);
   renderBoard(state, ctx);
   renderLibrary(state, ctx);
-  renderWorkflow(state, ctx);
 }
 
 // ---- tab routing ----------------------------------------------------------
@@ -245,6 +305,8 @@ function wireFilters() {
 function boot() {
   wireTabs();
   wireFilters();
+  initWorkflow(ctx);
+  initLanes(ctx);
   initApp();
 }
 

@@ -2,7 +2,7 @@
 // Migrated from the single-file index.html renderLibrary / library modal.
 // Imports only from ./modal.js; receives ctx (no circular import with app.js).
 
-import { askConfirm, showToast, flashStatus } from './modal.js';
+import { askConfirm, showToast } from './modal.js';
 
 function getEl(id){ return document.getElementById(id); }
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -145,6 +145,6 @@ export function copyLibBody(id, ctx){
   const i = ctx.state.library.find(x=>x.id===id);
   if(!i) return;
   navigator.clipboard.writeText(i.body)
-    .then(()=> ctx.showToast('copied to clipboard'))
-    .catch(()=> ctx.showToast('copy failed'));
+    .then(()=> showToast('copied to clipboard'))
+    .catch(()=> showToast('copy failed'));
 }

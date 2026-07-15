@@ -18,7 +18,6 @@
     <button class="tab-btn active" data-tab="dashboard">dashboard</button>
     <button class="tab-btn" data-tab="board">board</button>
     <button class="tab-btn" data-tab="library">instructions</button>
-    <button class="tab-btn" data-tab="workflow">workflow</button>
   </div>
   <div class="top-actions"><span id="statusPill" class="status-pill">saved</span></div>
 </div>
@@ -46,9 +45,63 @@
 <div class="view" id="view-board">
   <div class="board-toolbar">
     <input type="text" id="boardSearch" placeholder="filter by title, repo, or tag...">
-    <button class="btn primary" id="newTaskBtn">+ new task</button>
+    <div class="board-actions">
+      <button class="btn ghost" id="manageLanesBtn">manage lanes</button>
+      <button class="btn ghost" id="manageWorkflowBtn">manage workflow</button>
+      <button class="btn primary" id="newTaskBtn">+ new task</button>
+    </div>
   </div>
-  <div class="board" id="boardEl"></div>
+  <div class="swim-board" id="boardEl"></div>
+</div>
+
+<!-- WORKFLOW MODAL -->
+<div class="modal-overlay" id="workflowModalOverlay">
+  <div class="modal">
+    <h2>manage workflow</h2>
+    <p class="modal-help">Add states for your process. Deleting a state with cards requires moving them to another state first.</p>
+    <div id="workflowStateList" class="workflow-state-list"></div>
+    <div id="workflowDeletePanel" class="workflow-delete-panel" hidden>
+      <div id="workflowDeleteMessage" class="modal-help"></div>
+      <div class="field" id="workflowReplacementWrap"><label>move cards to</label><select id="workflowReplacementSelect"></select></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="cancelDeleteWorkflowStateBtn">cancel</button>
+        <button class="btn danger" id="confirmDeleteWorkflowStateBtn">delete state</button>
+      </div>
+    </div>
+    <div class="workflow-add">
+      <div class="field"><label>state name</label><input id="workflowStateName" type="text" maxlength="40" placeholder="e.g. review"></div>
+      <div class="field workflow-color"><label>color</label><input id="workflowStateColor" type="color" value="#4FD1C5"></div>
+      <button class="btn primary" id="addWorkflowStateBtn">+ add state</button>
+    </div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <button class="btn ghost" id="workflowCloseBtn">done</button>
+    </div>
+  </div>
+</div>
+
+<!-- LANES MODAL -->
+<div class="modal-overlay" id="lanesModalOverlay">
+  <div class="modal">
+    <h2>manage swimlanes</h2>
+    <p class="modal-help">Lanes are horizontal rows on the board. Deleting a lane with cards requires moving them to another lane first.</p>
+    <div id="lanesList" class="workflow-state-list"></div>
+    <div id="laneDeletePanel" class="workflow-delete-panel" hidden>
+      <div id="laneDeleteMessage" class="modal-help"></div>
+      <div class="field" id="laneReplacementWrap"><label>move cards to</label><select id="laneReplacementSelect"></select></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="cancelDeleteLaneBtn">cancel</button>
+        <button class="btn danger" id="confirmDeleteLaneBtn">delete lane</button>
+      </div>
+    </div>
+    <div class="workflow-add">
+      <div class="field"><label>lane name</label><input id="laneName" type="text" maxlength="40" placeholder="e.g. priority"></div>
+      <div class="field workflow-color"><label>color</label><input id="laneColor" type="color" value="#9B8FE0"></div>
+      <button class="btn primary" id="addLaneBtn">+ add lane</button>
+    </div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <button class="btn ghost" id="lanesCloseBtn">done</button>
+    </div>
+  </div>
 </div>
 
 <!-- LIBRARY -->
@@ -58,16 +111,6 @@
     <button class="btn primary" id="newLibBtn">+ new instruction</button>
   </div>
   <div class="lib-grid" id="libGrid"></div>
-</div>
-
-<!-- WORKFLOW -->
-<div class="view" id="view-workflow">
-  <div class="wf-toolbar">
-    <input type="text" id="wfName" placeholder="new state name...">
-    <input type="color" id="wfColor" class="wf-color" value="#4FD1C5" title="state color">
-    <button class="btn primary" id="wfAddBtn">+ add state</button>
-  </div>
-  <div class="wf-list" id="workflowList"></div>
 </div>
 
 <!-- TASK MODAL -->
@@ -90,6 +133,10 @@
       <div class="field">
         <label>stage</label>
         <select id="f-column"></select>
+      </div>
+      <div class="field">
+        <label>swimlane</label>
+        <select id="f-lane"></select>
       </div>
     </div>
     <div class="field" id="f-agent-custom-wrap" style="display:none;"><label>agent (custom)</label><input id="f-agent-custom" type="text" placeholder="e.g. local Llama build"></div>
@@ -130,10 +177,6 @@
   <div class="modal" style="max-width:380px;">
     <h2 style="color:var(--coral)">delete?</h2>
     <p id="confirmMessage" style="font-size:13.5px;color:var(--muted);line-height:1.5;margin:0 0 22px 0;"></p>
-    <div id="confirmDestWrap" style="display:none;margin:0 0 18px 0;">
-      <label>reassign cards to</label>
-      <select id="confirmDest"></select>
-    </div>
     <div class="modal-actions" style="justify-content:flex-end;">
       <div class="right">
         <button class="btn ghost" id="confirmCancelBtn">cancel</button>

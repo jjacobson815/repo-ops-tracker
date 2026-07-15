@@ -12,7 +12,7 @@
 .tabs{display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:3px;}
 .top-actions{display:flex;gap:10px;align-items:center;}
 
-.view{display:none;padding:24px;max-width:1400px;margin:0 auto;}
+.view{display:none;padding:24px;max-width:1600px;margin:0 auto;}
 .view.active{display:block;}
 
 /* ---------- dashboard layout ---------- */
@@ -22,31 +22,89 @@
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;}
 .panel h3{font-family:var(--font-mono);font-size:12.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 14px 0;}
 
-/* ---------- board layout ---------- */
+/* ---------- board toolbar ---------- */
 .board-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:12px;flex-wrap:wrap;}
+.board-actions{display:flex;gap:8px;align-items:center;}
 .board-toolbar input{max-width:260px;}
-.board{display:flex;gap:16px;overflow-x:auto;padding-bottom:12px;}
-.column{
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  min-width:270px;max-width:270px;flex-shrink:0;display:flex;flex-direction:column;max-height:calc(100vh - 220px);
+
+/* ---------- swimlane board grid ---------- */
+/* The board is a CSS grid: rows = lanes, columns = workflow states.          */
+/* Column widths are set inline via JS (minmax(240px,1fr) per workflow col).  */
+.swim-board{
+  display:grid;
+  overflow-x:auto;
+  padding-bottom:12px;
+  gap:0;
+  align-items:stretch;
 }
-.column-head{
-  padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;
-  border-top:3px solid var(--accent,var(--teal));border-radius:var(--radius) var(--radius) 0 0;
+
+/* Top-left empty corner cell */
+.swim-corner{
+  background:var(--surface);
+  border-right:1px solid var(--border);
+  border-bottom:1px solid var(--border);
+  min-width:140px;
+  border-radius:var(--radius) 0 0 0;
 }
-.column-head .prompt{font-family:var(--font-mono);font-size:12.5px;color:var(--text);}
-.column-head .prompt::before{content:"~/";color:var(--muted);}
-.column-head .prompt::after{content:" $";color:var(--accent,var(--teal));}
-.column-head .count{font-family:var(--font-mono);font-size:11px;color:var(--muted);background:var(--bg);padding:2px 7px;border-radius:20px;}
-.column-body{padding:10px;overflow-y:auto;flex:1;min-height:60px;}
-.column-body.drag-over{background:rgba(79,209,197,0.06);}
+
+/* Column header cells (row 0) */
+.swim-col-header{
+  background:var(--surface);
+  border-right:1px solid var(--border);
+  border-bottom:2px solid var(--border);
+  border-top:3px solid var(--accent, var(--teal));
+  padding:10px 14px;
+  display:flex;justify-content:space-between;align-items:center;
+  position:sticky;top:0;z-index:5;
+}
+.swim-col-header .col-name{
+  font-family:var(--font-mono);font-size:12px;color:var(--text);
+}
+.swim-col-header .col-name::before{content:"~/";color:var(--muted);}
+.swim-col-header .col-name::after{content:" $";color:var(--accent,var(--teal));}
+.swim-col-header .col-count{
+  font-family:var(--font-mono);font-size:11px;color:var(--muted);
+  background:var(--bg);padding:2px 7px;border-radius:20px;
+}
+
+/* Lane label cells (column 0) */
+.swim-lane-label{
+  background:var(--surface);
+  border-right:3px solid var(--lane-accent, var(--teal));
+  border-bottom:1px solid var(--border);
+  min-width:140px;max-width:140px;
+  padding:10px 12px;
+  display:flex;align-items:flex-start;
+  position:sticky;left:0;z-index:4;
+}
+.swim-lane-label .lane-name{
+  font-family:var(--font-mono);font-size:11.5px;
+  color:var(--lane-accent, var(--teal));
+  writing-mode:horizontal-tb;
+  word-break:break-word;
+  font-weight:500;
+}
+
+/* Individual data cells */
+.swim-cell{
+  background:var(--bg);
+  border-right:1px solid var(--border);
+  border-bottom:1px solid var(--border);
+  padding:8px;
+  min-height:100px;
+  transition:background .15s;
+  vertical-align:top;
+}
+.swim-cell.drag-over{background:rgba(79,209,197,0.06);}
+.swim-cell .cell-cards{display:flex;flex-direction:column;gap:0;}
 
 /* ---------- instructions library layout ---------- */
 .lib-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:12px;flex-wrap:wrap;}
 .lib-toolbar input{max-width:280px;}
 .lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
 
-/* ---------- workflow layout ---------- */
-.wf-toolbar{display:flex;justify-content:flex-start;align-items:center;margin-bottom:18px;gap:12px;flex-wrap:wrap;}
-.wf-toolbar input[type="text"]{max-width:280px;}
-.wf-list{display:flex;flex-direction:column;}
+@media(max-width:560px){
+  .board-actions{width:100%;}
+  .board-actions .btn{flex:1;}
+  .swim-lane-label{min-width:80px;max-width:80px;}
+}
