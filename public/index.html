@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>repo-ops // tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles/variables.css">
+<link rel="stylesheet" href="styles/layout.css">
+<link rel="stylesheet" href="styles/components.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><span class="dot"></span><h1>repo-ops <span>// personal build tracker</span></h1></div>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="dashboard">dashboard</button>
+    <button class="tab-btn" data-tab="board">board</button>
+    <button class="tab-btn" data-tab="library">instructions</button>
+    <button class="tab-btn" data-tab="workflow">workflow</button>
+  </div>
+  <div class="top-actions"><span id="statusPill" class="status-pill">saved</span></div>
+</div>
+
+<!-- DASHBOARD -->
+<div class="view active" id="view-dashboard">
+  <div class="stat-grid" id="statGrid"></div>
+  <div class="dash-grid">
+    <div class="panel">
+      <h3>by stage</h3>
+      <div id="stageBars"></div>
+    </div>
+    <div class="panel">
+      <h3>by agent</h3>
+      <div id="agentBars"></div>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:20px;">
+    <h3>recent activity</h3>
+    <div id="recentActivity"></div>
+  </div>
+</div>
+
+<!-- BOARD -->
+<div class="view" id="view-board">
+  <div class="board-toolbar">
+    <input type="text" id="boardSearch" placeholder="filter by title, repo, or tag...">
+    <button class="btn primary" id="newTaskBtn">+ new task</button>
+  </div>
+  <div class="board" id="boardEl"></div>
+</div>
+
+<!-- LIBRARY -->
+<div class="view" id="view-library">
+  <div class="lib-toolbar">
+    <input type="text" id="libSearch" placeholder="filter instructions...">
+    <button class="btn primary" id="newLibBtn">+ new instruction</button>
+  </div>
+  <div class="lib-grid" id="libGrid"></div>
+</div>
+
+<!-- WORKFLOW -->
+<div class="view" id="view-workflow">
+  <div class="wf-toolbar">
+    <input type="text" id="wfName" placeholder="new state name...">
+    <input type="color" id="wfColor" class="wf-color" value="#4FD1C5" title="state color">
+    <button class="btn primary" id="wfAddBtn">+ add state</button>
+  </div>
+  <div class="wf-list" id="workflowList"></div>
+</div>
+
+<!-- TASK MODAL -->
+<div class="modal-overlay" id="taskModalOverlay">
+  <div class="modal">
+    <h2 id="taskModalTitle">new task</h2>
+    <div class="field"><label>title</label><input id="f-title" type="text" placeholder="e.g. onboard payments-service repo"></div>
+    <div class="field-row">
+      <div class="field"><label>repo name</label><input id="f-repo" type="text" placeholder="payments-service"></div>
+      <div class="field"><label>repo url</label><input id="f-url" type="text" placeholder="https://github.com/org/repo"></div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>agent</label>
+        <select id="f-agent">
+          <option>Claude</option><option>Antigravity</option><option>Codex</option><option>Tencent</option>
+          <option>DeepSeek</option><option>Gemini</option><option>GPT</option><option>Other</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>stage</label>
+        <select id="f-column"></select>
+      </div>
+    </div>
+    <div class="field" id="f-agent-custom-wrap" style="display:none;"><label>agent (custom)</label><input id="f-agent-custom" type="text" placeholder="e.g. local Llama build"></div>
+    <div class="field"><label>tags (comma separated)</label><input id="f-tags" type="text" placeholder="docs-gen, build, api"></div>
+    <div class="field"><label>notes / instructions used</label><textarea id="f-notes" placeholder="what you told the agent, findings, blockers..."></textarea></div>
+    <div class="modal-actions">
+      <div><button class="btn danger" id="taskDeleteBtn" style="display:none;">delete</button></div>
+      <div class="right">
+        <button class="btn ghost" id="taskCancelBtn">cancel</button>
+        <button class="btn primary" id="taskSaveBtn">save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- LIBRARY MODAL -->
+<div class="modal-overlay" id="libModalOverlay">
+  <div class="modal">
+    <h2 id="libModalTitle">new instruction</h2>
+    <div class="field"><label>title</label><input id="l-title" type="text" placeholder="e.g. Dev Docs Bootstrap"></div>
+    <div class="field">
+      <label>category</label>
+      <select id="l-cat"><option>Orientation</option><option>Docs Generation</option><option>Build / Test</option><option>Code Change</option><option>Review</option><option>Other</option></select>
+    </div>
+    <div class="field"><label>prompt / instructions</label><textarea id="l-body" style="min-height:160px;" placeholder="the actual text you paste to the agent..."></textarea></div>
+    <div class="modal-actions">
+      <div><button class="btn danger" id="libDeleteBtn" style="display:none;">delete</button></div>
+      <div class="right">
+        <button class="btn ghost" id="libCancelBtn">cancel</button>
+        <button class="btn primary" id="libSaveBtn">save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CONFIRM MODAL -->
+<div class="modal-overlay" id="confirmOverlay">
+  <div class="modal" style="max-width:380px;">
+    <h2 style="color:var(--coral)">delete?</h2>
+    <p id="confirmMessage" style="font-size:13.5px;color:var(--muted);line-height:1.5;margin:0 0 22px 0;"></p>
+    <div id="confirmDestWrap" style="display:none;margin:0 0 18px 0;">
+      <label>reassign cards to</label>
+      <select id="confirmDest"></select>
+    </div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <div class="right">
+        <button class="btn ghost" id="confirmCancelBtn">cancel</button>
+        <button class="btn danger" id="confirmDeleteBtn">delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
