@@ -9,7 +9,7 @@ CSS files are placed in `public/styles/`:
 - `components.css`: Contains specific visual styles for buttons, cards, list groups, modal popups, and confirmation alerts.
 
 ## Script Modules Layout
-Javascript files are placed in `public/js/`:
+JavaScript files are placed in `public/js/`:
 - `app.js`: Connects core application states, defines default tab routing behavior, and manages listeners.
 - `api.js`: Wraps all REST client operations (`fetch` HTTP calls to Node server).
 

@@ -266,6 +266,7 @@ export function saveTaskFromModal(ctx) {
     agentCustom: getEl('f-agent-custom').value.trim(),
     column: getEl('f-column').value,
     laneId: getEl('f-lane')?.value || (ctx.LANES[0]?.id || 'general'),
+    boardId: state.currentBoardId,
     tags,
     notes: getEl('f-notes').value,
     updatedAt: nowIso()

@@ -14,6 +14,7 @@ const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
 const LIBRARY_FILE = path.join(DATA_DIR, 'library.json');
 const WORKFLOW_FILE = path.join(DATA_DIR, 'workflow.json');
 const LANES_FILE = path.join(DATA_DIR, 'lanes.json');
+const BOARDS_FILE = path.join(DATA_DIR, 'boards.json');
 
 const PORT = process.env.PORT || 8787;
 
@@ -27,11 +28,11 @@ function nowIso() {
 
 function defaultWorkflow() {
   return [
-    { id: 'backlog', label: 'backlog', accent: '#8891A5', isComplete: false },
-    { id: 'cloning', label: 'cloning', accent: '#4FD1C5', isComplete: false },
-    { id: 'agent-docs', label: 'agent-docs', accent: '#F5A623', isComplete: false },
-    { id: 'build-touch', label: 'build-touch', accent: '#9B8FE0', isComplete: false },
-    { id: 'done', label: 'done', accent: '#4ADE80', isComplete: true }
+    { id: 'backlog', label: 'backlog', accent: '#8891A5', isComplete: false, boardId: 'default', sortOrder: 0 },
+    { id: 'cloning', label: 'cloning', accent: '#4FD1C5', isComplete: false, boardId: 'default', sortOrder: 1 },
+    { id: 'agent-docs', label: 'agent-docs', accent: '#F5A623', isComplete: false, boardId: 'default', sortOrder: 2 },
+    { id: 'build-touch', label: 'build-touch', accent: '#9B8FE0', isComplete: false, boardId: 'default', sortOrder: 3 },
+    { id: 'done', label: 'done', accent: '#4ADE80', isComplete: true, boardId: 'default', sortOrder: 4 }
   ];
 }
 
@@ -44,13 +45,46 @@ function validWorkflow(workflow) {
     ids.add(state.id);
     return typeof state.label === 'string' && state.label.trim().length > 0 && state.label.trim().length <= 40
       && typeof state.accent === 'string' && /^#[0-9a-fA-F]{6}$/.test(state.accent)
-      && typeof state.isComplete === 'boolean';
+      && typeof state.isComplete === 'boolean'
+      && typeof state.boardId === 'string' && /^[a-z0-9-]+$/.test(state.boardId)
+      && typeof state.sortOrder === 'number';
+  });
+}
+
+function defaultBoards() {
+  return [{
+    id: 'default',
+    title: 'Default board',
+    description: 'The default board',
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    isDefault: true
+  }];
+}
+
+function validBoard(board) {
+  return board && typeof board === 'object'
+    && typeof board.id === 'string' && /^[a-z0-9-]+$/.test(board.id)
+    && typeof board.title === 'string' && board.title.trim().length > 0
+    && typeof board.description === 'string'
+    && typeof board.createdAt === 'string'
+    && typeof board.updatedAt === 'string'
+    && typeof board.isDefault === 'boolean';
+}
+
+function validBoards(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return false;
+  const ids = new Set();
+  return arr.every(board => {
+    if (!validBoard(board) || ids.has(board.id)) return false;
+    ids.add(board.id);
+    return true;
   });
 }
 
 function defaultLanes() {
   return [
-    { id: 'general', label: 'general', accent: '#4FD1C5' }
+    { id: 'general', boardId: 'default', label: 'general', accent: '#4FD1C5', sortOrder: 0 }
   ];
 }
 
@@ -59,6 +93,8 @@ function validLane(lane) {
   if (typeof lane.id !== 'string' || !/^[a-z0-9-]+$/.test(lane.id)) return false;
   if (typeof lane.label !== 'string' || lane.label.trim().length === 0 || lane.label.trim().length > 40) return false;
   if (typeof lane.accent !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(lane.accent)) return false;
+  if (typeof lane.boardId !== 'string' || !/^[a-z0-9-]+$/.test(lane.boardId)) return false;
+  if (typeof lane.sortOrder !== 'number') return false;
   return true;
 }
 
@@ -69,6 +105,16 @@ function validLanes(arr) {
     if (!validLane(lane)) return false;
     if (ids.has(lane.id)) return false;
     ids.add(lane.id);
+    return true;
+  });
+}
+
+function validBoards(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return false;
+  const ids = new Set();
+  return arr.every(board => {
+    if (!validBoard(board) || ids.has(board.id)) return false;
+    ids.add(board.id);
     return true;
   });
 }
@@ -130,17 +176,45 @@ async function ensureSeeded() {
 
 async function ensureWorkflow() {
   const existing = await readCollection(WORKFLOW_FILE);
-  if (!validWorkflow(existing)) {
-    await writeCollection(WORKFLOW_FILE, defaultWorkflow());
-    console.log(`Seeded ${WORKFLOW_FILE} with default workflow states.`);
+  if (existing.length > 0) {
+    const migrated = existing.map((state, index) => ({
+      ...state,
+      boardId: typeof state.boardId === 'string' && /^[a-z0-9-]+$/.test(state.boardId) ? state.boardId : 'default',
+      sortOrder: typeof state.sortOrder === 'number' ? state.sortOrder : index
+    }));
+    if (validWorkflow(migrated)) {
+      await writeCollection(WORKFLOW_FILE, migrated);
+      console.log(`Migrated ${WORKFLOW_FILE} to board-scoped workflow entries.`);
+      return;
+    }
   }
+  await writeCollection(WORKFLOW_FILE, defaultWorkflow());
+  console.log(`Seeded ${WORKFLOW_FILE} with default workflow states.`);
 }
 
 async function ensureLanes() {
   const existing = await readCollection(LANES_FILE);
-  if (!validLanes(existing)) {
-    await writeCollection(LANES_FILE, defaultLanes());
-    console.log(`Seeded ${LANES_FILE} with default lane.`);
+  if (existing.length > 0) {
+    const migrated = existing.map((lane, index) => ({
+      ...lane,
+      boardId: typeof lane.boardId === 'string' && /^[a-z0-9-]+$/.test(lane.boardId) ? lane.boardId : 'default',
+      sortOrder: typeof lane.sortOrder === 'number' ? lane.sortOrder : index
+    }));
+    if (validLanes(migrated)) {
+      await writeCollection(LANES_FILE, migrated);
+      console.log(`Migrated ${LANES_FILE} to board-scoped lane entries.`);
+      return;
+    }
+  }
+  await writeCollection(LANES_FILE, defaultLanes());
+  console.log(`Seeded ${LANES_FILE} with default lane.`);
+}
+
+async function ensureBoards() {
+  const existing = await readCollection(BOARDS_FILE);
+  if (!validBoards(existing)) {
+    await writeCollection(BOARDS_FILE, defaultBoards());
+    console.log(`Seeded ${BOARDS_FILE} with default board.`);
   }
 }
 
@@ -208,6 +282,220 @@ app.post('/api/workflow', async (req, res) => {
   } catch (err) {
     console.error('POST /api/workflow failed:', err.message);
     res.status(500).json({ error: 'Failed to write workflow' });
+  }
+});
+
+app.get('/api/boards', async (req, res) => {
+  try {
+    res.json(await readCollection(BOARDS_FILE));
+  } catch (err) {
+    console.error('GET /api/boards failed:', err.message);
+    res.status(500).json({ error: 'Failed to read boards' });
+  }
+});
+
+app.get('/api/boards/:boardId', async (req, res) => {
+  try {
+    const boards = await readCollection(BOARDS_FILE);
+    const board = boards.find(b => b.id === req.params.boardId);
+    if (!board) return res.status(404).json({ error: 'Board not found' });
+    res.json(board);
+  } catch (err) {
+    console.error('GET /api/boards/:boardId failed:', err.message);
+    res.status(500).json({ error: 'Failed to read board' });
+  }
+});
+
+app.post('/api/boards', async (req, res) => {
+  try {
+    if (!validBoards(req.body)) {
+      return res.status(400).json({ error: 'Boards must contain one or more valid, uniquely identified entries' });
+    }
+    await writeCollection(BOARDS_FILE, req.body);
+    res.status(200).json({ ok: true, count: req.body.length });
+  } catch (err) {
+    console.error('POST /api/boards failed:', err.message);
+    res.status(500).json({ error: 'Failed to write boards' });
+  }
+});
+
+app.put('/api/boards/:boardId', async (req, res) => {
+  try {
+    const boards = await readCollection(BOARDS_FILE);
+    const index = boards.findIndex(b => b.id === req.params.boardId);
+    if (index < 0) {
+      return res.status(404).json({ error: 'Board not found' });
+    }
+    const updated = { ...boards[index], ...req.body, id: req.params.boardId, updatedAt: nowIso() };
+    if (!validBoard(updated)) {
+      return res.status(400).json({ error: 'Invalid board update' });
+    }
+    boards[index] = updated;
+    await writeCollection(BOARDS_FILE, boards);
+    res.status(200).json({ ok: true, board: updated });
+  } catch (err) {
+    console.error('PUT /api/boards/:boardId failed:', err.message);
+    res.status(500).json({ error: 'Failed to update board' });
+  }
+});
+
+app.delete('/api/boards/:boardId', async (req, res) => {
+  try {
+    const boards = await readCollection(BOARDS_FILE);
+    if (!boards.some(b => b.id === req.params.boardId)) {
+      return res.status(404).json({ error: 'Board not found' });
+    }
+    const remaining = boards.filter(b => b.id !== req.params.boardId);
+    if (remaining.length === 0) {
+      return res.status(400).json({ error: 'Cannot delete the last remaining board' });
+    }
+    const tasks = await readCollection(TASKS_FILE);
+    const lanes = await readCollection(LANES_FILE);
+    const workflow = await readCollection(WORKFLOW_FILE);
+    await Promise.all([
+      writeCollection(BOARDS_FILE, remaining),
+      writeCollection(TASKS_FILE, tasks.filter(t => t.boardId !== req.params.boardId)),
+      writeCollection(LANES_FILE, lanes.filter(l => l.boardId !== req.params.boardId)),
+      writeCollection(WORKFLOW_FILE, workflow.filter(w => w.boardId !== req.params.boardId))
+    ]);
+    res.status(200).json({ ok: true, boards: remaining });
+  } catch (err) {
+    console.error('DELETE /api/boards/:boardId failed:', err.message);
+    res.status(500).json({ error: 'Failed to delete board' });
+  }
+});
+
+app.get('/api/boards/:boardId/tasks', async (req, res) => {
+  try {
+    const tasks = await readCollection(TASKS_FILE);
+    res.json(tasks.filter(t => t.boardId === req.params.boardId));
+  } catch (err) {
+    console.error('GET /api/boards/:boardId/tasks failed:', err.message);
+    res.status(500).json({ error: 'Failed to read tasks' });
+  }
+});
+
+app.post('/api/boards/:boardId/tasks', async (req, res) => {
+  try {
+    const incoming = Array.isArray(req.body) ? req.body : [];
+    const tasks = await readCollection(TASKS_FILE);
+    const other = tasks.filter(t => t.boardId !== req.params.boardId);
+    await writeCollection(TASKS_FILE, [...other, ...incoming]);
+    res.status(200).json({ ok: true, count: incoming.length });
+  } catch (err) {
+    console.error('POST /api/boards/:boardId/tasks failed:', err.message);
+    res.status(500).json({ error: 'Failed to write tasks' });
+  }
+});
+
+app.get('/api/boards/:boardId/lanes', async (req, res) => {
+  try {
+    const lanes = await readCollection(LANES_FILE);
+    res.json(lanes.filter(l => l.boardId === req.params.boardId));
+  } catch (err) {
+    console.error('GET /api/boards/:boardId/lanes failed:', err.message);
+    res.status(500).json({ error: 'Failed to read lanes' });
+  }
+});
+
+app.post('/api/boards/:boardId/lanes', async (req, res) => {
+  try {
+    const incoming = Array.isArray(req.body) ? req.body : [];
+    const lanes = await readCollection(LANES_FILE);
+    const other = lanes.filter(l => l.boardId !== req.params.boardId);
+    await writeCollection(LANES_FILE, [...other, ...incoming]);
+    res.status(200).json({ ok: true, count: incoming.length });
+  } catch (err) {
+    console.error('POST /api/boards/:boardId/lanes failed:', err.message);
+    res.status(500).json({ error: 'Failed to write lanes' });
+  }
+});
+
+app.delete('/api/boards/:boardId/lanes/:laneId', async (req, res) => {
+  try {
+    const lanes = await readCollection(LANES_FILE);
+    const boardLanes = lanes.filter(l => l.boardId === req.params.boardId);
+    const remaining = boardLanes.filter(l => l.id !== req.params.laneId);
+    if (remaining.length === boardLanes.length) {
+      return res.status(404).json({ error: 'Lane not found' });
+    }
+    if (remaining.length === 0) {
+      return res.status(400).json({ error: 'Cannot delete last lane' });
+    }
+    const tasks = await readCollection(TASKS_FILE);
+    const affected = tasks.filter(t => t.boardId === req.params.boardId && t.laneId === req.params.laneId);
+    const replacementLaneId = req.body?.replacementLaneId;
+    if (affected.length > 0 && !remaining.some(l => l.id === replacementLaneId)) {
+      return res.status(400).json({ error: 'A valid replacement lane is required' });
+    }
+    const updatedTasks = affected.length > 0
+      ? tasks.map(t => t.boardId === req.params.boardId && t.laneId === req.params.laneId
+          ? { ...t, laneId: replacementLaneId, updatedAt: nowIso() }
+          : t)
+      : tasks;
+    await Promise.all([
+      writeCollection(TASKS_FILE, updatedTasks),
+      writeCollection(LANES_FILE, lanes.filter(l => !(l.boardId === req.params.boardId && l.id === req.params.laneId)))
+    ]);
+    res.status(200).json({ ok: true, lanes: remaining });
+  } catch (err) {
+    console.error('DELETE /api/boards/:boardId/lanes/:laneId failed:', err.message);
+    res.status(500).json({ error: 'Failed to delete lane' });
+  }
+});
+
+app.get('/api/boards/:boardId/workflow', async (req, res) => {
+  try {
+    const workflow = await readCollection(WORKFLOW_FILE);
+    res.json(workflow.filter(w => w.boardId === req.params.boardId));
+  } catch (err) {
+    console.error('GET /api/boards/:boardId/workflow failed:', err.message);
+    res.status(500).json({ error: 'Failed to read workflow' });
+  }
+});
+
+app.post('/api/boards/:boardId/workflow', async (req, res) => {
+  try {
+    const incoming = Array.isArray(req.body) ? req.body : [];
+    const workflow = await readCollection(WORKFLOW_FILE);
+    const other = workflow.filter(w => w.boardId !== req.params.boardId);
+    await writeCollection(WORKFLOW_FILE, [...other, ...incoming]);
+    res.status(200).json({ ok: true, count: incoming.length });
+  } catch (err) {
+    console.error('POST /api/boards/:boardId/workflow failed:', err.message);
+    res.status(500).json({ error: 'Failed to write workflow' });
+  }
+});
+
+app.post('/api/boards/:boardId/workflow/delete', async (req, res) => {
+  try {
+    const { stateId, replacementStateId } = req.body || {};
+    const workflow = await readCollection(WORKFLOW_FILE);
+    const boardWorkflow = workflow.filter(w => w.boardId === req.params.boardId);
+    const stateExists = boardWorkflow.some(state => state.id === stateId);
+    const nextWorkflow = boardWorkflow.filter(state => state.id !== stateId);
+    if (!stateExists || nextWorkflow.length === 0) {
+      return res.status(400).json({ error: 'Cannot delete this workflow state' });
+    }
+
+    const tasks = await readCollection(TASKS_FILE);
+    const affectedTasks = tasks.filter(task => task.boardId === req.params.boardId && task.column === stateId);
+    if (affectedTasks.length > 0 && !nextWorkflow.some(state => state.id === replacementStateId)) {
+      return res.status(400).json({ error: 'A valid replacement state is required' });
+    }
+
+    const updatedTasks = affectedTasks.length
+      ? tasks.map(task => task.boardId === req.params.boardId && task.column === stateId
+          ? { ...task, column: replacementStateId, updatedAt: nowIso() }
+          : task)
+      : tasks;
+    if (affectedTasks.length > 0) await writeCollection(TASKS_FILE, updatedTasks);
+
+    await writeCollection(WORKFLOW_FILE, workflow.filter(w => !(w.boardId === req.params.boardId && w.id === stateId)));
+    res.status(200).json({ ok: true, reassigned: affectedTasks.length, workflow: nextWorkflow });
+  } catch (err) {
+    console.error('POST /api/boards/:boardId/workflow/delete failed:', err.message);
+    res.status(500).json({ error: 'Failed to delete workflow state' });
   }
 });
 
@@ -306,6 +594,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 async function start() {
   await ensureDataDir();
   await ensureSeeded();
+  await ensureBoards();
   await ensureWorkflow();
   await ensureLanes();
   app.listen(PORT, () => {

@@ -39,21 +39,108 @@ export async function saveLibrary(library) {
   });
 }
 
-export async function getWorkflow() {
-  const res = await fetch('/api/workflow');
+export async function getWorkflow(boardId) {
+  const res = await fetch(`/api/boards/${boardId}/workflow`);
   return res.json();
 }
 
-export async function saveWorkflow(workflow) {
-  return fetch('/api/workflow', {
+export async function saveWorkflow(boardId, workflow) {
+  return fetch(`/api/boards/${boardId}/workflow`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(workflow)
   });
 }
 
-export async function deleteWorkflowState(stateId, replacementStateId) {
-  return fetch('/api/workflow/delete', {
+export async function deleteWorkflowState(boardId, stateId, replacementStateId) {
+  return fetch(`/api/boards/${boardId}/workflow/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stateId, replacementStateId })
+  });
+}
+
+export async function getBoards() {
+  const res = await fetch('/api/boards');
+  return res.json();
+}
+
+export async function getBoard(boardId) {
+  const res = await fetch(`/api/boards/${boardId}`);
+  return res.json();
+}
+
+export async function saveBoards(boards) {
+  return fetch('/api/boards', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(boards)
+  });
+}
+
+export async function updateBoard(boardId, board) {
+  return fetch(`/api/boards/${boardId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(board)
+  });
+}
+
+export async function deleteBoard(boardId) {
+  return fetch(`/api/boards/${boardId}`, {
+    method: 'DELETE'
+  });
+}
+
+export async function getBoardTasks(boardId) {
+  const res = await fetch(`/api/boards/${boardId}/tasks`);
+  return res.json();
+}
+
+export async function saveBoardTasks(boardId, tasks) {
+  return fetch(`/api/boards/${boardId}/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tasks)
+  });
+}
+
+export async function getBoardLanes(boardId) {
+  const res = await fetch(`/api/boards/${boardId}/lanes`);
+  return res.json();
+}
+
+export async function saveBoardLanes(boardId, lanes) {
+  return fetch(`/api/boards/${boardId}/lanes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(lanes)
+  });
+}
+
+export async function deleteBoardLane(boardId, laneId, replacementLaneId) {
+  return fetch(`/api/boards/${boardId}/lanes/${laneId}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ replacementLaneId })
+  });
+}
+
+export async function getBoardWorkflow(boardId) {
+  const res = await fetch(`/api/boards/${boardId}/workflow`);
+  return res.json();
+}
+
+export async function saveBoardWorkflow(boardId, workflow) {
+  return fetch(`/api/boards/${boardId}/workflow`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(workflow)
+  });
+}
+
+export async function deleteBoardWorkflowState(boardId, stateId, replacementStateId) {
+  return fetch(`/api/boards/${boardId}/workflow/delete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stateId, replacementStateId })

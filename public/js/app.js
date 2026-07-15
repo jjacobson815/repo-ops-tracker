@@ -94,16 +94,27 @@
 // ----------------------------------------------------------------------------
 
 import {
+  getBoards,
+  getBoard,
+  saveBoards,
+  updateBoard,
+  deleteBoard,
   getTasks,
   saveTasks as apiSaveTasks,
+  getBoardTasks,
+  saveBoardTasks,
   getLibrary,
   saveLibrary as apiSaveLibrary,
   getWorkflow,
   saveWorkflow as apiSaveWorkflow,
   deleteWorkflowState as apiDeleteWorkflowState,
   getLanes,
+  getBoardLanes,
   saveLanes as apiSaveLanes,
-  deleteLane as apiDeleteLane
+  deleteBoardLane,
+  getBoardWorkflow,
+  saveBoardWorkflow,
+  deleteBoardWorkflowState
 } from './api.js';
 import { renderDashboard } from './components/dashboard.js';
 import {
@@ -136,10 +147,12 @@ export const LANES = [];
 // Single global application state. Mutated in place by component controllers;
 // never reassigned wholesale (so imported references stay valid).
 export const state = {
+  boards: [],
+  currentBoardId: null,
   tasks: [],
   library: [],
-  workflow: COLUMNS,  // alias kept for backward compat
-  lanes: LANES,       // alias kept in sync with the exported array
+  workflow: COLUMNS,
+  lanes: LANES,
   currentTaskId: null,
   currentLibId: null,
 };
@@ -166,7 +179,8 @@ const ctx = {
 
 export async function saveTasks() {
   try {
-    const res = await apiSaveTasks(state.tasks);
+    if (!state.currentBoardId) throw new Error('no current board');
+    const res = await saveBoardTasks(state.currentBoardId, state.tasks);
     if (!res.ok) throw new Error('tasks save failed');
     flashStatus('saved');
   } catch (e) {
@@ -186,7 +200,8 @@ export async function saveLibrary() {
 
 export async function saveWorkflow(workflow) {
   try {
-    const res = await apiSaveWorkflow(workflow);
+    if (!state.currentBoardId) throw new Error('no current board');
+    const res = await saveBoardWorkflow(state.currentBoardId, workflow);
     const body = await res.json();
     if (!res.ok) return { ok: false, error: body.error };
     flashStatus('saved');
@@ -199,7 +214,8 @@ export async function saveWorkflow(workflow) {
 
 export async function deleteWorkflowState(stateId, replacementStateId) {
   try {
-    const res = await apiDeleteWorkflowState(stateId, replacementStateId);
+    if (!state.currentBoardId) throw new Error('no current board');
+    const res = await deleteBoardWorkflowState(state.currentBoardId, stateId, replacementStateId);
     const body = await res.json();
     if (!res.ok) return { ok: false, error: body.error };
     flashStatus('saved');
@@ -212,7 +228,8 @@ export async function deleteWorkflowState(stateId, replacementStateId) {
 
 export async function saveLanes(lanes) {
   try {
-    const res = await apiSaveLanes(lanes);
+    if (!state.currentBoardId) throw new Error('no current board');
+    const res = await saveBoardLanes(state.currentBoardId, lanes);
     const body = await res.json();
     if (!res.ok) return { ok: false, error: body.error };
     flashStatus('saved');
@@ -225,7 +242,8 @@ export async function saveLanes(lanes) {
 
 export async function deleteLane(laneId, replacementLaneId) {
   try {
-    const res = await apiDeleteLane(laneId, replacementLaneId);
+    if (!state.currentBoardId) throw new Error('no current board');
+    const res = await deleteBoardLane(state.currentBoardId, laneId, replacementLaneId);
     const body = await res.json();
     if (!res.ok) return { ok: false, error: body.error };
     flashStatus('saved');
@@ -240,26 +258,41 @@ export async function deleteLane(laneId, replacementLaneId) {
 
 export async function initApp() {
   try {
-    const [tasks, library, workflow, lanes] = await Promise.all([
-      getTasks(), getLibrary(), getWorkflow(), getLanes()
+    state.boards = await getBoards();
+    state.currentBoardId = state.boards.find(b => b.isDefault)?.id || state.boards[0]?.id || null;
+    state.library = Array.isArray(await getLibrary()) ? await getLibrary() : [];
+
+    refreshBoardSelector();
+
+    if (!state.currentBoardId) {
+      showToast('no board available');
+      return;
+    }
+
+    const [tasks, workflow, lanes] = await Promise.all([
+      getBoardTasks(state.currentBoardId),
+      getBoardWorkflow(state.currentBoardId),
+      getBoardLanes(state.currentBoardId)
     ]);
+
     state.tasks = Array.isArray(tasks) ? tasks : [];
-    state.library = Array.isArray(library) ? library : [];
     COLUMNS.splice(0, COLUMNS.length, ...(Array.isArray(workflow) ? workflow : []));
     LANES.splice(0, LANES.length, ...(Array.isArray(lanes) ? lanes : []));
 
-    // Migration guard: assign laneId = 'general' to any task that predates
-    // the swimlane feature, then persist so the fix survives a reload.
     const defaultLaneId = LANES[0]?.id || 'general';
     let needsMigration = false;
     state.tasks.forEach(t => {
+      if (!t.boardId) {
+        t.boardId = state.currentBoardId;
+        needsMigration = true;
+      }
       if (!t.laneId) {
         t.laneId = defaultLaneId;
         needsMigration = true;
       }
     });
     if (needsMigration) {
-      try { await apiSaveTasks(state.tasks); } catch (_) { /* non-fatal */ }
+      try { await saveBoardTasks(state.currentBoardId, state.tasks); } catch (_) { /* non-fatal */ }
     }
   } catch (e) {
     showToast('failed to load data');
@@ -300,11 +333,43 @@ function wireFilters() {
   if (libSearch) libSearch.addEventListener('input', () => renderLibrary(state, ctx));
 }
 
+function wireBoardSelector() {
+  const selector = document.getElementById('boardSelector');
+  if (!selector) return;
+  selector.addEventListener('change', async (event) => {
+    await switchBoard(event.target.value);
+  });
+}
+
+function refreshBoardSelector() {
+  const selector = document.getElementById('boardSelector');
+  if (!selector) return;
+  selector.innerHTML = state.boards.map(board =>
+    `<option value="${board.id}">${board.title}</option>`
+  ).join('');
+  selector.value = state.currentBoardId || '';
+}
+
+export async function switchBoard(boardId) {
+  if (!boardId || state.currentBoardId === boardId) return;
+  state.currentBoardId = boardId;
+  const [tasks, workflow, lanes] = await Promise.all([
+    getBoardTasks(boardId),
+    getBoardWorkflow(boardId),
+    getBoardLanes(boardId)
+  ]);
+  state.tasks = Array.isArray(tasks) ? tasks : [];
+  COLUMNS.splice(0, COLUMNS.length, ...(Array.isArray(workflow) ? workflow : []));
+  LANES.splice(0, LANES.length, ...(Array.isArray(lanes) ? lanes : []));
+  renderAll();
+}
+
 // ---- boot -----------------------------------------------------------------
 
 function boot() {
   wireTabs();
   wireFilters();
+  wireBoardSelector();
   initWorkflow(ctx);
   initLanes(ctx);
   initApp();
