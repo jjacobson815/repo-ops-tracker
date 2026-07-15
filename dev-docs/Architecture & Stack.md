@@ -6,7 +6,7 @@ The **repo-ops-tracker** uses a lightweight, low-overhead stack designed for loc
 
 ```mermaid
 graph TD
-    subgraph Browser (Client)
+    subgraph Browser[Client]
         HTML[index.html] -->|Loads| AppJS[js/app.js]
         AppJS -->|Imports| ESM[ES Modules: dashboard, board, library, modal]
         AppJS -->|Queries| API[js/api.js]
