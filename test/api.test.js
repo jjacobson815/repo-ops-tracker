@@ -205,6 +205,51 @@ async function main() {
       }
       record('SQLite database and data files written to disk', ok, detail);
     }
+
+    // f. KI-01 regression: creating a 2nd board via POST /api/boards (bulk
+    //    replace) must NOT wipe the default board's lanes / workflow states /
+    //    tasks. Previously saveAllBoards did deleteMany()+createMany(), and the
+    //    onDelete: Cascade relations wiped every board's children.
+    {
+      const beforeLanes = await getJson('/api/boards/default/lanes');
+      const beforeWf = await getJson('/api/boards/default/workflow');
+      const beforeTasks = await getJson('/api/boards/default/tasks');
+      const laneCountBefore = Array.isArray(beforeLanes.body) ? beforeLanes.body.length : 0;
+      const wfCountBefore = Array.isArray(beforeWf.body) ? beforeWf.body.length : 0;
+      const taskCountBefore = Array.isArray(beforeTasks.body) ? beforeTasks.body.length : 0;
+
+      const boardsRes = await getJson('/api/boards');
+      const boards = Array.isArray(boardsRes.body) ? boardsRes.body : [];
+      const newBoard = {
+        id: 'ki01-b2',
+        title: 'KI-01 board 2',
+        description: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        isDefault: false
+      };
+      const post = await postJson('/api/boards', [...boards, newBoard]);
+      const afterBoards = await getJson('/api/boards');
+      const afterLanes = await getJson('/api/boards/default/lanes');
+      const afterWf = await getJson('/api/boards/default/workflow');
+      const afterTasks = await getJson('/api/boards/default/tasks');
+
+      const b2Present = Array.isArray(afterBoards.body) && afterBoards.body.some((b) => b.id === 'ki01-b2');
+      const laneCountAfter = Array.isArray(afterLanes.body) ? afterLanes.body.length : 0;
+      const wfCountAfter = Array.isArray(afterWf.body) ? afterWf.body.length : 0;
+      const taskCountAfter = Array.isArray(afterTasks.body) ? afterTasks.body.length : 0;
+
+      const ok =
+        post.status === 200 &&
+        b2Present &&
+        laneCountAfter === laneCountBefore &&
+        wfCountAfter === wfCountBefore &&
+        taskCountAfter === taskCountBefore &&
+        laneCountAfter > 0 &&
+        wfCountAfter > 0;
+      record('KI-01: creating 2nd board preserves default board lanes/workflow/tasks', ok,
+        `postStatus=${post.status}, b2Present=${b2Present}, lanes=${laneCountBefore}->${laneCountAfter}, wf=${wfCountBefore}->${wfCountAfter}, tasks=${taskCountBefore}->${taskCountAfter}`);
+    }
   } catch (err) {
     record('test execution', false, err.message);
     console.error(err);
