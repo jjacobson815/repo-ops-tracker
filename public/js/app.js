@@ -136,6 +136,22 @@ import { askConfirm, closeConfirm, showToast, flashStatus } from './components/m
 import { initWorkflow } from './components/workflow.js';
 import { initLanes } from './components/lanes.js';
 
+// Local HTML-escaping helper (this project duplicates this per-file rather
+// than sharing a single util module). Used to safely interpolate untrusted
+// values (e.g. board titles/ids) into innerHTML.
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => {
+    switch (c) {
+      case '&': return '\u0026amp;';
+      case '<': return '\u0026lt;';
+      case '>': return '\u0026gt;';
+      case '"': return '\u0026quot;';
+      case "'": return '\u0026#39;';
+    }
+    return c;
+  });
+}
+
 // Kanban stages — defined ONCE here and exported for board.js / modal.js reuse.
 // Do not hardcode column ids anywhere else.
 export const COLUMNS = [];
@@ -345,7 +361,7 @@ function refreshBoardSelector() {
   const selector = document.getElementById('boardSelector');
   if (!selector) return;
   selector.innerHTML = state.boards.map(board =>
-    `<option value="${board.id}">${board.title}</option>`
+    `<option value="${escapeHtml(board.id)}">${escapeHtml(board.title)}</option>`
   ).join('');
   selector.value = state.currentBoardId || '';
 }
