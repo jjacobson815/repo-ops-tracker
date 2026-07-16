@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "migrate:json": "node scripts/migrate-json-to-sqlite.js"
+    "migrate:json": "node scripts/migrate-json-to-sqlite.js",
+    "test": "node test/api.test.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
