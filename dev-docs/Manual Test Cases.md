@@ -347,4 +347,4 @@ UI/Docker interactions: 8 require manual run (underlying APIs verified where not
   board create/replace. Verified by the KI-01 regression test added to
   `test/api.test.js` (creating a 2nd board leaves `default`'s lane/workflow/task
   counts unchanged: `lanes=1->1, wf=5->5, tasks=1->1`).
-- **Status:** Resolved in `49f12c7`.
+- **Status:** Resolved in `675e6bf`.
