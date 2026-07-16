@@ -1,0 +1,7 @@
+# Mirror key .gitignore exclusions to keep Docker build context lean
+node_modules/
+*.db*
+.env*
+data/
+.git/
+dev-docs/

@@ -1,161 +1,188 @@
-// workflow.js — workflow state management view (Phase C3)
-// Manages the kanban workflow states: add / rename / recolor / toggle complete /
-// reorder / delete. Reads the workflow via ctx.getWorkflow()/setWorkflow() and
-// persists via ctx.saveWorkflow(). Every destructive action goes through
-// askConfirm in modal.js (per AGENTS.md — never wire delete straight to a
-// mutation). Imports only from ./modal.js and ../api.js; receives `ctx` (no
-// circular import with app.js).
+import { askConfirm, showToast } from './modal.js';
 
-import { askConfirm, showToast, flashStatus } from './modal.js';
-import { getTasks, deleteWorkflowState } from '../api.js';
-
-function getEl(id){ return document.getElementById(id); }
-function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
-function escapeHtml(s){
-  return (s||'').replace(/[&<>"']/g, c => {
-    switch(c){
-      case '&':  return '&' + 'amp;';
-      case '<':  return '&' + 'lt;';
-      case '>':  return '&' + 'gt;';
-      case '"':  return '&' + 'quot;';
-      case "'":  return '&' + '#39;';
-    }
-    return c;
-  });
+function getEl(id) { return document.getElementById(id); }
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[char]));
 }
 
 let ctxRef = null;
+let pendingDeleteId = null;
 let staticWired = false;
 
-function wireStatic(){
-  const addBtn = getEl('wfAddBtn');
-  if(addBtn) addBtn.addEventListener('click', ()=> onAdd(ctxRef));
+function makeId(label, workflow) {
+  const base = label.toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'state';
+  let id = base;
+  let suffix = 2;
+  while (workflow.some(state => state.id === id)) id = `${base}-${suffix++}`;
+  return id;
 }
 
-export function renderWorkflow(state, ctx){
-  ctxRef = ctx;
-  if(!staticWired){ wireStatic(); staticWired = true; }
+function hideDeletePanel() {
+  pendingDeleteId = null;
+  const panel = getEl('workflowDeletePanel');
+  if (panel) panel.hidden = true;
+}
 
-  const list = getEl('workflowList');
-  if(!list) return;
-  const wf = ctx.getWorkflow();
-  if(!wf.length){
-    list.innerHTML = `<div class="empty-col">no workflow states — add one above.</div>`;
+function renderStateList() {
+  const list = getEl('workflowStateList');
+  if (!list || !ctxRef) return;
+  const { workflow, tasks } = ctxRef.state;
+  list.innerHTML = workflow.map((state, index) => {
+    const count = tasks.filter(task => task.column === state.id).length;
+    return `<div class="workflow-state">
+      <span class="workflow-state-swatch" style="background:${state.accent}"></span>
+      <input class="workflow-state-input" data-workflow-label="${state.id}" value="${escapeHtml(state.label)}" maxlength="40" aria-label="State name">
+      <input class="workflow-state-color" type="color" data-workflow-color="${state.id}" value="${state.accent}" aria-label="State color">
+      <span class="workflow-state-meta">${count} card${count === 1 ? '' : 's'}${state.isComplete ? ' · complete' : ''}</span>
+      <label class="workflow-complete"><input type="checkbox" data-workflow-complete="${state.id}"${state.isComplete ? ' checked' : ''}> complete</label>
+      <button class="btn ghost" data-move-workflow-state="${state.id}" data-direction="up"${index === 0 ? ' disabled' : ''}>up</button>
+      <button class="btn ghost" data-move-workflow-state="${state.id}" data-direction="down"${index === workflow.length - 1 ? ' disabled' : ''}>down</button>
+      <button class="btn ghost" data-save-workflow-state="${state.id}">save</button>
+      <button class="btn danger" data-delete-workflow-state="${state.id}">delete</button>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('[data-delete-workflow-state]').forEach(button => {
+    button.addEventListener('click', () => beginDelete(button.dataset.deleteWorkflowState));
+  });
+  list.querySelectorAll('[data-save-workflow-state]').forEach(button => {
+    button.addEventListener('click', () => saveState(button.dataset.saveWorkflowState));
+  });
+  list.querySelectorAll('[data-move-workflow-state]').forEach(button => {
+    button.addEventListener('click', () => moveState(button.dataset.moveWorkflowState, button.dataset.direction));
+  });
+}
+
+async function persistWorkflow(nextWorkflow, message) {
+  const result = await ctxRef.saveWorkflow(nextWorkflow);
+  if (!result.ok) {
+    showToast(result.error || 'could not save workflow');
+    return false;
+  }
+  ctxRef.state.workflow.splice(0, ctxRef.state.workflow.length, ...nextWorkflow);
+  renderStateList();
+  ctxRef.renderAll();
+  showToast(message);
+  return true;
+}
+
+async function saveState(stateId) {
+  const label = getEl('workflowStateList')?.querySelector(`[data-workflow-label="${stateId}"]`)?.value.trim();
+  const accent = getEl('workflowStateList')?.querySelector(`[data-workflow-color="${stateId}"]`)?.value;
+  const isComplete = getEl('workflowStateList')?.querySelector(`[data-workflow-complete="${stateId}"]`)?.checked;
+  if (!label) {
+    showToast('state name required');
     return;
   }
-  list.innerHTML = wf.map((s, idx)=>`
-    <div class="wf-row" data-id="${escapeHtml(s.id)}">
-      <span class="wf-swatch" style="background:${escapeHtml(s.color)}"></span>
-      <input type="color" class="wf-color" value="${escapeHtml(s.color)}" data-id="${escapeHtml(s.id)}" title="state color">
-      <input type="text" class="wf-name" value="${escapeHtml(s.name)}" data-id="${escapeHtml(s.id)}" placeholder="state name">
-      <label class="wf-complete" title="mark as a completed / terminal state">
-        <input type="checkbox" data-complete="${escapeHtml(s.id)}" ${s.isComplete ? 'checked' : ''}> complete
-      </label>
-      <div class="wf-move">
-        <button class="wf-btn" data-up="${escapeHtml(s.id)}" ${idx===0?'disabled':''} title="move up">&#9650;</button>
-        <button class="wf-btn" data-down="${escapeHtml(s.id)}" ${idx===wf.length-1?'disabled':''} title="move down">&#9660;</button>
-      </div>
-      <button class="btn danger wf-del" data-del="${escapeHtml(s.id)}" title="delete state">delete</button>
-    </div>`).join('');
-
-  // color: live-update the swatch on input (no re-render, keeps the picker open);
-  // persist + re-render on change (picker closed).
-  list.querySelectorAll('input.wf-color').forEach(inp=>{
-    inp.addEventListener('input', ()=>{
-      const row = inp.closest('.wf-row');
-      const swatch = row && row.querySelector('.wf-swatch');
-      if(swatch) swatch.style.background = inp.value;
-    });
-    inp.addEventListener('change', ()=> onFieldChange(inp.dataset.id, 'color', inp.value));
-  });
-
-  // name: persist on change (blur / enter) so we don't re-render mid-typing.
-  list.querySelectorAll('input.wf-name').forEach(inp=>{
-    inp.addEventListener('change', ()=> onFieldChange(inp.dataset.id, 'name', inp.value.trim()));
-  });
-
-  // complete toggle
-  list.querySelectorAll('input[data-complete]').forEach(inp=>{
-    inp.addEventListener('change', ()=> onFieldChange(inp.dataset.complete, 'isComplete', inp.checked));
-  });
-
-  // reorder
-  list.querySelectorAll('button[data-up]').forEach(btn=>{
-    btn.addEventListener('click', ()=> onMove(btn.dataset.up, 'up'));
-  });
-  list.querySelectorAll('button[data-down]').forEach(btn=>{
-    btn.addEventListener('click', ()=> onMove(btn.dataset.down, 'down'));
-  });
-
-  // delete (goes through askConfirm)
-  list.querySelectorAll('button[data-del]').forEach(btn=>{
-    btn.addEventListener('click', ()=> onDelete(btn.dataset.del));
-  });
+  const nextWorkflow = ctxRef.state.workflow.map(state => state.id === stateId
+    ? { ...state, label, accent, isComplete }
+    : state);
+  await persistWorkflow(nextWorkflow, 'workflow state saved');
 }
 
-function onAdd(ctx){
-  const nameEl = getEl('wfName');
-  const colorEl = getEl('wfColor');
-  const name = (nameEl && nameEl.value || '').trim();
-  if(!name){ showToast('name required'); return; }
-  const color = (colorEl && colorEl.value) || '#4FD1C5';
-  ctx.getWorkflow().push({ id: uid(), name, color, isComplete: false });
-  if(nameEl) nameEl.value = '';
-  ctx.saveWorkflow();
-  ctx.renderAll();
+async function moveState(stateId, direction) {
+  const workflow = ctxRef.state.workflow;
+  const index = workflow.findIndex(state => state.id === stateId);
+  const targetIndex = direction === 'up' ? index - 1 : index + 1;
+  if (index < 0 || targetIndex < 0 || targetIndex >= workflow.length) return;
+  const nextWorkflow = [...workflow];
+  [nextWorkflow[index], nextWorkflow[targetIndex]] = [nextWorkflow[targetIndex], nextWorkflow[index]];
+  await persistWorkflow(nextWorkflow, 'workflow reordered');
 }
 
-function onFieldChange(id, field, value){
-  const s = ctxRef.getWorkflow().find(x=>x.id===id);
-  if(!s) return;
-  s[field] = value;
-  ctxRef.saveWorkflow();
-  ctxRef.renderAll();
-}
-
-function onMove(id, dir){
-  const wf = ctxRef.getWorkflow();
-  const idx = wf.findIndex(s=>s.id===id);
-  if(idx === -1) return;
-  const swap = dir === 'up' ? idx - 1 : idx + 1;
-  if(swap < 0 || swap >= wf.length) return;
-  const tmp = wf[idx]; wf[idx] = wf[swap]; wf[swap] = tmp;
-  ctxRef.saveWorkflow();
-  ctxRef.renderAll();
-}
-
-function onDelete(id){
-  const wf = ctxRef.getWorkflow();
-  const s = wf.find(x=>x.id===id);
-  if(!s) return;
-  const cardCount = ctxRef.state.tasks.filter(t=>t.column===id).length;
-  if(cardCount === 0){
-    askConfirm(`Delete state "${s.name}"? This can't be undone.`, ()=> doDelete(id, null));
-  } else {
-    const others = wf.filter(x=>x.id!==id);
-    askConfirm(
-      `Delete state "${s.name}"? ${cardCount} card(s) reference it and will be reassigned to the chosen state.`,
-      (dest)=> doDelete(id, dest),
-      { destinationOptions: others }
-    );
+function beginDelete(stateId) {
+  const { workflow, tasks } = ctxRef.state;
+  const state = workflow.find(item => item.id === stateId);
+  const alternatives = workflow.filter(item => item.id !== stateId);
+  if (!state || alternatives.length === 0) {
+    showToast('keep at least one workflow state');
+    return;
   }
+
+  pendingDeleteId = stateId;
+  const count = tasks.filter(task => task.column === stateId).length;
+  const message = getEl('workflowDeleteMessage');
+  const select = getEl('workflowReplacementSelect');
+  const wrap = getEl('workflowReplacementWrap');
+  if (message) message.textContent = count
+    ? `Move ${count} card${count === 1 ? '' : 's'} before deleting “${state.label}”.`
+    : `Delete the empty “${state.label}” state?`;
+  if (select) select.innerHTML = alternatives.map(item => `<option value="${item.id}">${escapeHtml(item.label)}</option>`).join('');
+  if (wrap) wrap.hidden = count === 0;
+  const panel = getEl('workflowDeletePanel');
+  if (panel) panel.hidden = false;
 }
 
-async function doDelete(id, destination){
-  try {
-    const res = await deleteWorkflowState(id, destination || undefined);
-    if(!res.ok){ showToast('delete failed'); return; }
-    const data = await res.json();
-    ctxRef.setWorkflow(data.workflow);
-    // The server reassigns affected tasks to `destination`; refresh the
-    // in-memory tasks so the board/dashboard reflect the reassignment.
-    if(destination){
-      const tasks = await getTasks();
-      if(Array.isArray(tasks)) ctxRef.state.tasks = tasks;
+async function confirmDelete() {
+  if (!pendingDeleteId || !ctxRef) return;
+  const state = ctxRef.state.workflow.find(item => item.id === pendingDeleteId);
+  const count = ctxRef.state.tasks.filter(task => task.column === pendingDeleteId).length;
+  const replacementStateId = getEl('workflowReplacementSelect')?.value;
+  if (count && !replacementStateId) {
+    showToast('choose a state for the cards');
+    return;
+  }
+  askConfirm(`Delete “${state?.label || 'this'}”${count ? ` and move ${count} card${count === 1 ? '' : 's'}` : ''}?`, async () => {
+    const result = await ctxRef.deleteWorkflowState(pendingDeleteId, replacementStateId);
+    if (!result.ok) {
+      showToast(result.error || 'could not delete state');
+      return;
     }
+    ctxRef.state.workflow.splice(0, ctxRef.state.workflow.length, ...result.workflow);
+    if (count) {
+      ctxRef.state.tasks.forEach(task => {
+        if (task.column === pendingDeleteId) task.column = replacementStateId;
+      });
+    }
+    hideDeletePanel();
+    renderStateList();
     ctxRef.renderAll();
-    showToast('state deleted');
-  } catch(e){
-    showToast('delete failed');
+    showToast('workflow state deleted');
+  });
+}
+
+async function addState() {
+  const name = getEl('workflowStateName')?.value.trim();
+  const accent = getEl('workflowStateColor')?.value || '#4FD1C5';
+  if (!name) {
+    showToast('state name required');
+    return;
   }
+  const workflow = ctxRef.state.workflow;
+  const nextWorkflow = [...workflow, { id: makeId(name, workflow), label: name, accent, isComplete: false }];
+  const saved = await persistWorkflow(nextWorkflow, 'workflow state added');
+  if (!saved) return;
+  getEl('workflowStateName').value = '';
+}
+
+function wireStatic() {
+  getEl('manageWorkflowBtn')?.addEventListener('click', () => openWorkflowModal(ctxRef));
+  getEl('workflowCloseBtn')?.addEventListener('click', closeWorkflowModal);
+  getEl('addWorkflowStateBtn')?.addEventListener('click', addState);
+  getEl('cancelDeleteWorkflowStateBtn')?.addEventListener('click', hideDeletePanel);
+  getEl('confirmDeleteWorkflowStateBtn')?.addEventListener('click', confirmDelete);
+}
+
+export function initWorkflow(ctx) {
+  ctxRef = ctx;
+  if (!staticWired) {
+    wireStatic();
+    staticWired = true;
+  }
+}
+
+export function openWorkflowModal(ctx) {
+  ctxRef = ctx;
+  hideDeletePanel();
+  renderStateList();
+  getEl('workflowModalOverlay')?.classList.add('show');
+}
+
+export function closeWorkflowModal() {
+  hideDeletePanel();
+  getEl('workflowModalOverlay')?.classList.remove('show');
 }

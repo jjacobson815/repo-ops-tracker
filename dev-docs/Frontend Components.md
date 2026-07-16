@@ -9,7 +9,7 @@ CSS files are placed in `public/styles/`:
 - `components.css`: Contains specific visual styles for buttons, cards, list groups, modal popups, and confirmation alerts.
 
 ## Script Modules Layout
-Javascript files are placed in `public/js/`:
+JavaScript files are placed in `public/js/`:
 - `app.js`: Connects core application states, defines default tab routing behavior, and manages listeners.
 - `api.js`: Wraps all REST client operations (`fetch` HTTP calls to Node server).
 
@@ -23,4 +23,6 @@ Javascript files are placed in `public/js/`:
   - Renders task cards within columns.
   - Implements browser Drag and Drop APIs (`ondragstart`, `ondragover`, `ondrop`).
 - `library.js`: Renders instructions cards, list searches, and copy buttons.
+- `workflow.js`: Renders the workflow/column configuration UI for a board — lists workflow states with editable labels, colors, completion flags, and reordering; supports adding, saving, and deleting states (with task reassignment on delete).
+- `lanes.js`: Renders the lane configuration UI for a board — lists lanes with editable labels, colors, and reordering; supports adding, saving, and deleting lanes (with task reassignment on delete).
 - `modal.js`: Controls visual states of inputs, task/instruction forms, and manages custom confirm triggers (before running dangerous delete actions).

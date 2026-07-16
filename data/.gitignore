@@ -1,2 +1,11 @@
 *.json
 !.gitignore
+
+# SQLite database (runtime state — regenerated via `prisma migrate deploy`)
+# The DB file is NOT the source of truth; prisma/schema.prisma + prisma/migrations/ are.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3

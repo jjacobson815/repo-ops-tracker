@@ -4,13 +4,13 @@
 //
 // Responsibilities of THIS file (Phase C1):
 //   - Hold the single global `state` object.
-//   - Load the workflow states (kanban stages) from the backend and expose
-//     getWorkflow()/setWorkflow() getters (the old hardcoded COLUMNS is gone).
+//   - Define the kanban `COLUMNS` array once and export it.
+//   - Define the `LANES` array once and export it.
 //   - Load data from the backend via api.js and bootstrap the app (initApp).
 //   - Re-render all views (renderAll) by delegating to component modules.
 //   - Wire tab routing and the board/library filter inputs.
-//   - Provide persistence wrappers (saveTasks / saveLibrary) that call api.js
-//     and surface a status flash.
+//   - Provide persistence wrappers (saveTasks / saveLibrary / saveWorkflow /
+//     saveLanes / deleteLane) that call api.js and surface a status flash.
 //
 // ============================================================================
 // COMPONENT MODULE INTERFACE CONTRACT (Phase C2 must fulfill these EXACT
@@ -25,14 +25,15 @@
 //
 // ./components/board.js
 //   renderBoard(state, ctx)
-//       Renders the kanban board into #boardEl from state.tasks, honoring the
-//       #boardSearch filter value. Must ATTACH event listeners (drag/drop,
-//       card click -> openTaskModal, "+ add" buttons) — do NOT rely on the
-//       inline onclick="" handlers left in public/index.html; those reference
-//       globals that no longer exist. Use ctx for cross-cutting actions.
-//   openTaskModal(id, defaultColumn, ctx)
+//       Renders the kanban swimlane grid into #boardEl from state.tasks,
+//       honoring the #boardSearch filter value. Each cell is keyed by
+//       (laneId, colId). Must ATTACH event listeners (drag/drop, card click ->
+//       openTaskModal, "+ add" buttons) — do NOT rely on inline onclick=""
+//       handlers. Use ctx for cross-cutting actions.
+//   openTaskModal(id, defaultColumn, ctx, defaultLane)
 //       Opens #taskModalOverlay, populates the form from state.tasks[id] (or
-//       blanks it for a new task in `defaultColumn`). Sets state.currentTaskId.
+//       blanks it for a new task in `defaultColumn`/`defaultLane`).
+//       Sets state.currentTaskId.
 //   closeTaskModal(ctx)
 //       Hides #taskModalOverlay and clears state.currentTaskId.
 //   saveTaskFromModal(ctx)
@@ -43,7 +44,7 @@
 //       on confirm removes the task from state.tasks, ctx.saveTasks(),
 //       ctx.renderAll(), closeTaskModal.
 //   (drag-and-drop handlers are internal to board.js but must call
-//    ctx.saveTasks() + ctx.renderAll() on a successful column change.)
+//    ctx.saveTasks() + ctx.renderAll() on a successful cell change.)
 //
 // ./components/library.js
 //   renderLibrary(state, ctx)
@@ -67,16 +68,19 @@
 //   askConfirm(message, onConfirm)
 //       Shows #confirmOverlay with `message`; wires #confirmDeleteBtn to call
 //       onConfirm() once. This is the ONLY sanctioned path for destructive
-//       actions (delete task / delete library entry).
+//       actions (delete task / delete library entry / delete lane).
 //   closeConfirm()
 //       Hides #confirmOverlay and clears the pending callback.
 //   showToast(msg)
 //       Transient toast via #toast.
 //   flashStatus(msg)
 //       Transient "saved" pill via #statusPill.
-//   (modal.js is also responsible for wiring #confirmDeleteBtn and the
-//    click-outside-to-close behavior on #taskModalOverlay / #libModalOverlay /
-//    #confirmOverlay, replacing the old inline handlers.)
+//
+// ./components/workflow.js
+//   initWorkflow(ctx) — wires static buttons; captures ctxRef.
+//
+// ./components/lanes.js
+//   initLanes(ctx) — wires static buttons; captures ctxRef.
 //
 // ----------------------------------------------------------------------------
 // HOW COMPONENTS GET WHAT THEY NEED (no circular imports):
@@ -84,18 +88,33 @@
 //     './modal.js' (modal.js imports nothing from app.js or the other
 //     components, so there is no cycle).
 //   - Components receive `ctx` (built below) for the app-level actions that
-//     live in app.js: { state, getWorkflow, setWorkflow, saveTasks,
-//     saveLibrary, saveWorkflow, renderAll }.
+//     live in app.js: { state, COLUMNS, LANES, saveTasks, saveLibrary,
+//     saveWorkflow, deleteWorkflowState, saveLanes, deleteLane, renderAll }.
 //   - Components therefore NEVER import from app.js, avoiding a cycle.
 // ----------------------------------------------------------------------------
 
 import {
+  getBoards,
+  getBoard,
+  saveBoards,
+  updateBoard,
+  deleteBoard,
   getTasks,
   saveTasks as apiSaveTasks,
+  getBoardTasks,
+  saveBoardTasks,
   getLibrary,
   saveLibrary as apiSaveLibrary,
-  getWorkflow as apiGetWorkflow,
-  saveWorkflow as apiSaveWorkflow
+  getWorkflow,
+  saveWorkflow as apiSaveWorkflow,
+  deleteWorkflowState as apiDeleteWorkflowState,
+  getLanes,
+  getBoardLanes,
+  saveLanes as apiSaveLanes,
+  deleteBoardLane,
+  getBoardWorkflow,
+  saveBoardWorkflow,
+  deleteBoardWorkflowState
 } from './api.js';
 import { renderDashboard } from './components/dashboard.js';
 import {
@@ -113,25 +132,43 @@ import {
   deleteCurrentLib,
   copyLibBody
 } from './components/library.js';
-import { renderWorkflow } from './components/workflow.js';
 import { askConfirm, closeConfirm, showToast, flashStatus } from './components/modal.js';
+import { initWorkflow } from './components/workflow.js';
+import { initLanes } from './components/lanes.js';
 
-// Workflow states (kanban stages) are loaded from the backend (GET /api/workflow)
-// and held here as the single source of truth — they are no longer hardcoded.
-// Components read them via getWorkflow() and mutate via setWorkflow(); the `ctx`
-// object threads both into components so they never import app.js directly
-// (avoids a circular dependency). Keep the named-export style used for the old
-// COLUMNS so importers that expect a getter keep working.
-let workflow = [];
+// Local HTML-escaping helper (this project duplicates this per-file rather
+// than sharing a single util module). Used to safely interpolate untrusted
+// values (e.g. board titles/ids) into innerHTML.
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => {
+    switch (c) {
+      case '&': return '\u0026amp;';
+      case '<': return '\u0026lt;';
+      case '>': return '\u0026gt;';
+      case '"': return '\u0026quot;';
+      case "'": return '\u0026#39;';
+    }
+    return c;
+  });
+}
 
-export function getWorkflow(){ return workflow; }
-export function setWorkflow(w){ workflow = Array.isArray(w) ? w : []; }
+// Kanban stages — defined ONCE here and exported for board.js / modal.js reuse.
+// Do not hardcode column ids anywhere else.
+export const COLUMNS = [];
+
+// Swimlanes — defined ONCE here, exported for board.js / lanes.js reuse.
+// Populated from /api/lanes on boot.
+export const LANES = [];
 
 // Single global application state. Mutated in place by component controllers;
 // never reassigned wholesale (so imported references stay valid).
 export const state = {
+  boards: [],
+  currentBoardId: null,
   tasks: [],
   library: [],
+  workflow: COLUMNS,
+  lanes: LANES,
   currentTaskId: null,
   currentLibId: null,
 };
@@ -141,11 +178,14 @@ export const state = {
 // importing app.js (prevents a circular dependency).
 const ctx = {
   state,
-  getWorkflow,
-  setWorkflow,
+  COLUMNS,
+  LANES,
   saveTasks,
   saveLibrary,
   saveWorkflow,
+  deleteWorkflowState,
+  saveLanes,
+  deleteLane,
   renderAll,
 };
 
@@ -155,7 +195,8 @@ const ctx = {
 
 export async function saveTasks() {
   try {
-    const res = await apiSaveTasks(state.tasks);
+    if (!state.currentBoardId) throw new Error('no current board');
+    const res = await saveBoardTasks(state.currentBoardId, state.tasks);
     if (!res.ok) throw new Error('tasks save failed');
     flashStatus('saved');
   } catch (e) {
@@ -173,17 +214,59 @@ export async function saveLibrary() {
   }
 }
 
-// Persist the current workflow array (whole-array replace) and sync the in-
-// memory copy with whatever the server returns (it echoes the saved array).
-export async function saveWorkflow() {
+export async function saveWorkflow(workflow) {
   try {
-    const res = await apiSaveWorkflow(getWorkflow());
-    if (!res.ok) throw new Error('workflow save failed');
-    const saved = await res.json();
-    if (Array.isArray(saved)) setWorkflow(saved);
+    if (!state.currentBoardId) throw new Error('no current board');
+    const res = await saveBoardWorkflow(state.currentBoardId, workflow);
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: body.error };
     flashStatus('saved');
+    return { ok: true };
   } catch (e) {
     flashStatus('save failed');
+    return { ok: false, error: 'could not save workflow' };
+  }
+}
+
+export async function deleteWorkflowState(stateId, replacementStateId) {
+  try {
+    if (!state.currentBoardId) throw new Error('no current board');
+    const res = await deleteBoardWorkflowState(state.currentBoardId, stateId, replacementStateId);
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: body.error };
+    flashStatus('saved');
+    return { ok: true, workflow: body.workflow };
+  } catch (e) {
+    flashStatus('save failed');
+    return { ok: false, error: 'could not delete workflow state' };
+  }
+}
+
+export async function saveLanes(lanes) {
+  try {
+    if (!state.currentBoardId) throw new Error('no current board');
+    const res = await saveBoardLanes(state.currentBoardId, lanes);
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: body.error };
+    flashStatus('saved');
+    return { ok: true };
+  } catch (e) {
+    flashStatus('save failed');
+    return { ok: false, error: 'could not save lanes' };
+  }
+}
+
+export async function deleteLane(laneId, replacementLaneId) {
+  try {
+    if (!state.currentBoardId) throw new Error('no current board');
+    const res = await deleteBoardLane(state.currentBoardId, laneId, replacementLaneId);
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: body.error };
+    flashStatus('saved');
+    return { ok: true, lanes: body.lanes };
+  } catch (e) {
+    flashStatus('save failed');
+    return { ok: false, error: 'could not delete lane' };
   }
 }
 
@@ -191,19 +274,46 @@ export async function saveWorkflow() {
 
 export async function initApp() {
   try {
-    const [tasks, library, wf] = await Promise.all([
-      getTasks(),
-      getLibrary(),
-      apiGetWorkflow()
+    state.boards = await getBoards();
+    state.currentBoardId = state.boards.find(b => b.isDefault)?.id || state.boards[0]?.id || null;
+    state.library = Array.isArray(await getLibrary()) ? await getLibrary() : [];
+
+    refreshBoardSelector();
+
+    if (!state.currentBoardId) {
+      showToast('no board available');
+      return;
+    }
+
+    const [tasks, workflow, lanes] = await Promise.all([
+      getBoardTasks(state.currentBoardId),
+      getBoardWorkflow(state.currentBoardId),
+      getBoardLanes(state.currentBoardId)
     ]);
+
     state.tasks = Array.isArray(tasks) ? tasks : [];
-    state.library = Array.isArray(library) ? library : [];
-    setWorkflow(Array.isArray(wf) ? wf : []);
+    COLUMNS.splice(0, COLUMNS.length, ...(Array.isArray(workflow) ? workflow : []));
+    LANES.splice(0, LANES.length, ...(Array.isArray(lanes) ? lanes : []));
+
+    const defaultLaneId = LANES[0]?.id || 'general';
+    let needsMigration = false;
+    state.tasks.forEach(t => {
+      if (!t.boardId) {
+        t.boardId = state.currentBoardId;
+        needsMigration = true;
+      }
+      if (!t.laneId) {
+        t.laneId = defaultLaneId;
+        needsMigration = true;
+      }
+    });
+    if (needsMigration) {
+      try { await saveBoardTasks(state.currentBoardId, state.tasks); } catch (_) { /* non-fatal */ }
+    }
   } catch (e) {
     showToast('failed to load data');
     state.tasks = [];
     state.library = [];
-    setWorkflow([]);
   }
   renderAll();
 }
@@ -212,7 +322,6 @@ export function renderAll() {
   renderDashboard(state, ctx);
   renderBoard(state, ctx);
   renderLibrary(state, ctx);
-  renderWorkflow(state, ctx);
 }
 
 // ---- tab routing ----------------------------------------------------------
@@ -240,11 +349,53 @@ function wireFilters() {
   if (libSearch) libSearch.addEventListener('input', () => renderLibrary(state, ctx));
 }
 
+function wireBoardSelector() {
+  const selector = document.getElementById('boardSelector');
+  if (!selector) return;
+  selector.addEventListener('change', async (event) => {
+    await switchBoard(event.target.value);
+  });
+}
+
+function refreshBoardSelector() {
+  const selector = document.getElementById('boardSelector');
+  if (!selector) return;
+  selector.innerHTML = state.boards.map(board =>
+    `<option value="${escapeHtml(board.id)}">${escapeHtml(board.title)}</option>`
+  ).join('');
+  selector.value = state.currentBoardId || '';
+}
+
+export async function switchBoard(boardId) {
+  if (!boardId || state.currentBoardId === boardId) return;
+  const previousBoardId = state.currentBoardId;
+  try {
+    const [tasks, workflow, lanes] = await Promise.all([
+      getBoardTasks(boardId),
+      getBoardWorkflow(boardId),
+      getBoardLanes(boardId)
+    ]);
+
+    state.currentBoardId = boardId;
+    state.tasks = Array.isArray(tasks) ? tasks : [];
+    COLUMNS.splice(0, COLUMNS.length, ...(Array.isArray(workflow) ? workflow : []));
+    LANES.splice(0, LANES.length, ...(Array.isArray(lanes) ? lanes : []));
+    renderAll();
+  } catch (err) {
+    state.currentBoardId = previousBoardId;
+    refreshBoardSelector();
+    showToast('failed to switch board');
+  }
+}
+
 // ---- boot -----------------------------------------------------------------
 
 function boot() {
   wireTabs();
   wireFilters();
+  wireBoardSelector();
+  initWorkflow(ctx);
+  initLanes(ctx);
   initApp();
 }
 

@@ -1,2 +1,49 @@
 node_modules/
-%~z0
+
+# ---------------------------------------------------------------------------
+# SQLite databases (runtime state — regenerated via `prisma migrate deploy`)
+# The DB file is NOT the source of truth; prisma/schema.prisma + prisma/migrations/
+# are. Never commit local/dev databases or their journal/WAL files.
+# ---------------------------------------------------------------------------
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ---------------------------------------------------------------------------
+# Zero-Trust: never commit secrets or environment files
+# ---------------------------------------------------------------------------
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pkcs12
+id_rsa
+
+# ---------------------------------------------------------------------------
+# OS / IDE clutter
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+
+# ---------------------------------------------------------------------------
+# Build outputs / artifacts (generated locally or by CI)
+# ---------------------------------------------------------------------------
+dist/
+build/
+out/
+*.exe
+*.dll
+*.class
+
+# Logs / coverage
+*.log
+npm-debug.log*
+coverage/
+.nyc_output/

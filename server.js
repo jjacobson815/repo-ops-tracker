@@ -1,19 +1,14 @@
 'use strict';
 
 const path = require('path');
-const fs = require('fs');
-const fsp = require('fs/promises');
 const express = require('express');
+const db = require('./lib/db');
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
 // Resolve data directory (absolute). Defaults to ./data relative to cwd.
 const DATA_DIR = path.resolve(process.env.DATA_DIR || './data');
-const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
-const LIBRARY_FILE = path.join(DATA_DIR, 'library.json');
-const WORKFLOW_FILE = path.join(DATA_DIR, 'workflow.json');
-
 const PORT = process.env.PORT || 8787;
 
 // ---------- helpers ----------
@@ -22,6 +17,99 @@ function uid() {
 }
 function nowIso() {
   return new Date().toISOString();
+}
+
+function defaultWorkflow() {
+  return [
+    { id: 'backlog', label: 'backlog', accent: '#8891A5', isComplete: false, boardId: 'default', sortOrder: 0 },
+    { id: 'cloning', label: 'cloning', accent: '#4FD1C5', isComplete: false, boardId: 'default', sortOrder: 1 },
+    { id: 'agent-docs', label: 'agent-docs', accent: '#F5A623', isComplete: false, boardId: 'default', sortOrder: 2 },
+    { id: 'build-touch', label: 'build-touch', accent: '#9B8FE0', isComplete: false, boardId: 'default', sortOrder: 3 },
+    { id: 'done', label: 'done', accent: '#4ADE80', isComplete: true, boardId: 'default', sortOrder: 4 }
+  ];
+}
+
+function validWorkflow(workflow) {
+  if (!Array.isArray(workflow) || workflow.length === 0) return false;
+  const ids = new Set();
+  return workflow.every(state => {
+    if (!state || typeof state !== 'object') return false;
+    if (typeof state.id !== 'string' || !/^[a-z0-9-]+$/.test(state.id) || ids.has(state.id)) return false;
+    ids.add(state.id);
+    return typeof state.label === 'string' && state.label.trim().length > 0 && state.label.trim().length <= 40
+      && typeof state.accent === 'string' && /^#[0-9a-fA-F]{6}$/.test(state.accent)
+      && typeof state.isComplete === 'boolean'
+      && typeof state.boardId === 'string' && /^[a-z0-9-]+$/.test(state.boardId)
+      && typeof state.sortOrder === 'number';
+  });
+}
+
+function defaultBoards() {
+  return [{
+    id: 'default',
+    title: 'Default board',
+    description: 'The default board',
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    isDefault: true
+  }];
+}
+
+function validBoard(board) {
+  return board && typeof board === 'object'
+    && typeof board.id === 'string' && /^[a-z0-9-]+$/.test(board.id)
+    && typeof board.title === 'string' && board.title.trim().length > 0
+    && typeof board.description === 'string'
+    && typeof board.createdAt === 'string'
+    && typeof board.updatedAt === 'string'
+    && typeof board.isDefault === 'boolean';
+}
+
+function validBoards(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return false;
+  const ids = new Set();
+  return arr.every(board => {
+    if (!validBoard(board) || ids.has(board.id)) return false;
+    ids.add(board.id);
+    return true;
+  });
+}
+
+function defaultLanes() {
+  return [
+    { id: 'general', boardId: 'default', label: 'general', accent: '#4FD1C5', sortOrder: 0 }
+  ];
+}
+
+function validLane(lane) {
+  if (!lane || typeof lane !== 'object') return false;
+  if (typeof lane.id !== 'string' || !/^[a-z0-9-]+$/.test(lane.id)) return false;
+  if (typeof lane.label !== 'string' || lane.label.trim().length === 0 || lane.label.trim().length > 40) return false;
+  if (typeof lane.accent !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(lane.accent)) return false;
+  if (typeof lane.boardId !== 'string' || !/^[a-z0-9-]+$/.test(lane.boardId)) return false;
+  if (typeof lane.sortOrder !== 'number') return false;
+  return true;
+}
+
+function validLanes(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return false;
+  const ids = new Set();
+  return arr.every(lane => {
+    if (!validLane(lane)) return false;
+    if (ids.has(lane.id)) return false;
+    ids.add(lane.id);
+    return true;
+  });
+}
+
+function validBoards(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return false;
+  const ids = new Set();
+  return arr.every(board => {
+    if (!validBoard(board) || ids.has(board.id)) return false;
+    ids.add(board.id);
+    return true;
+  });
 }
 
 // Mirror the seedLibrary() logic from the original index.html.
@@ -45,63 +133,27 @@ function seedLibrary() {
   ];
 }
 
-// Default workflow states mirror the kanban COLUMNS defined in public/js/app.js
-// (ids MUST match the `column` values used by existing tasks so they keep
-// working). The final "done" column is flagged isComplete: true.
-function seedWorkflow() {
-  return [
-    { id: 'backlog',     name: 'backlog',     color: '#8891A5', isComplete: false },
-    { id: 'cloning',     name: 'cloning',     color: '#4FD1C5', isComplete: false },
-    { id: 'agent-docs',  name: 'agent-docs',  color: '#F5A623', isComplete: false },
-    { id: 'build-touch', name: 'build-touch', color: '#9B8FE0', isComplete: false },
-    { id: 'done',        name: 'done',        color: '#4ADE80', isComplete: true }
-  ];
-}
-
-async function ensureDataDir() {
-  await fsp.mkdir(DATA_DIR, { recursive: true });
-}
-
-// Read a JSON collection. Returns [] on missing/empty/invalid file.
-async function readCollection(file) {
-  try {
-    const raw = await fsp.readFile(file, 'utf8');
-    if (!raw || !raw.trim()) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (err) {
-    if (err.code === 'ENOENT') return [];
-    console.error(`Failed to read ${file}:`, err.message);
-    return [];
-  }
-}
-
-// Write a JSON collection (whole-array replace).
-async function writeCollection(file, arr) {
-  const data = JSON.stringify(arr, null, 2);
-  await fsp.writeFile(file, data, 'utf8');
-}
-
-// Seed library.json and workflow.json if missing or empty.
 async function ensureSeeded() {
-  const existingLib = await readCollection(LIBRARY_FILE);
-  if (existingLib.length === 0) {
-    const seeded = seedLibrary();
-    await writeCollection(LIBRARY_FILE, seeded);
-    console.log(`Seeded ${LIBRARY_FILE} with ${seeded.length} default prompts.`);
-  }
-  const existingWf = await readCollection(WORKFLOW_FILE);
-  if (existingWf.length === 0) {
-    const seeded = seedWorkflow();
-    await writeCollection(WORKFLOW_FILE, seeded);
-    console.log(`Seeded ${WORKFLOW_FILE} with ${seeded.length} default workflow states.`);
-  }
+  const existingBoards = await db.getAllBoards();
+  if (existingBoards.length > 0) return;
+
+  const boards = defaultBoards();
+  const workflows = defaultWorkflow();
+  const lanes = defaultLanes();
+  const library = seedLibrary();
+
+  await db.saveAllBoards(boards);
+  await db.saveAllWorkflows(workflows);
+  await db.saveAllLanes(lanes);
+  await db.saveAllLibraryEntries(library);
+
+  console.log(`Seeded SQLite database with default board, workflow, lanes, and prompts.`);
 }
 
 // ---------- routes ----------
 app.get('/api/tasks', async (req, res) => {
   try {
-    const tasks = await readCollection(TASKS_FILE);
+    const tasks = await db.getAllTasks();
     res.json(tasks);
   } catch (err) {
     console.error('GET /api/tasks failed:', err.message);
@@ -113,7 +165,7 @@ app.post('/api/tasks', async (req, res) => {
   try {
     const incoming = req.body;
     const tasks = Array.isArray(incoming) ? incoming : [];
-    await writeCollection(TASKS_FILE, tasks);
+    await db.saveAllTasks(tasks);
     res.status(200).json({ ok: true, count: tasks.length });
   } catch (err) {
     console.error('POST /api/tasks failed:', err.message);
@@ -123,7 +175,7 @@ app.post('/api/tasks', async (req, res) => {
 
 app.get('/api/library', async (req, res) => {
   try {
-    const library = await readCollection(LIBRARY_FILE);
+    const library = await db.getAllLibraryEntries();
     res.json(library);
   } catch (err) {
     console.error('GET /api/library failed:', err.message);
@@ -135,7 +187,7 @@ app.post('/api/library', async (req, res) => {
   try {
     const incoming = req.body;
     const library = Array.isArray(incoming) ? incoming : [];
-    await writeCollection(LIBRARY_FILE, library);
+    await db.saveAllLibraryEntries(library);
     res.status(200).json({ ok: true, count: library.length });
   } catch (err) {
     console.error('POST /api/library failed:', err.message);
@@ -143,11 +195,9 @@ app.post('/api/library', async (req, res) => {
   }
 });
 
-// ---------- workflow routes ----------
 app.get('/api/workflow', async (req, res) => {
   try {
-    const workflow = await readCollection(WORKFLOW_FILE);
-    res.json(workflow);
+    res.json(await db.getAllWorkflows());
   } catch (err) {
     console.error('GET /api/workflow failed:', err.message);
     res.status(500).json({ error: 'Failed to read workflow' });
@@ -156,72 +206,297 @@ app.get('/api/workflow', async (req, res) => {
 
 app.post('/api/workflow', async (req, res) => {
   try {
-    const incoming = req.body;
-    const workflow = Array.isArray(incoming) ? incoming : [];
-    // Validate each entry has the required fields (id, name, color, isComplete).
-    const valid = workflow.every(
-      (s) =>
-        s &&
-        typeof s.id === 'string' &&
-        typeof s.name === 'string' &&
-        typeof s.color === 'string' &&
-        typeof s.isComplete === 'boolean'
-    );
-    if (!valid) {
-      return res.status(400).json({
-        error:
-          'Each workflow state must have id (string), name (string), color (string), and isComplete (boolean)'
-      });
+    if (!validWorkflow(req.body)) {
+      return res.status(400).json({ error: 'Workflow must contain one or more valid, uniquely identified states' });
     }
-    await writeCollection(WORKFLOW_FILE, workflow);
-    res.status(200).json(workflow);
+    await db.saveAllWorkflows(req.body);
+    res.status(200).json({ ok: true, count: req.body.length });
   } catch (err) {
     console.error('POST /api/workflow failed:', err.message);
     res.status(500).json({ error: 'Failed to write workflow' });
   }
 });
 
-app.delete('/api/workflow/:id', async (req, res) => {
+app.get('/api/boards', async (req, res) => {
   try {
-    const id = req.params.id;
-    const workflow = await readCollection(WORKFLOW_FILE);
-    const stateIndex = workflow.findIndex((s) => s.id === id);
-    if (stateIndex === -1) {
-      return res.status(404).json({ error: `Workflow state '${id}' not found` });
-    }
-
-    // Find tasks referencing this state.
-    const tasks = await readCollection(TASKS_FILE);
-    const affected = tasks.filter((t) => t && t.column === id);
-
-    if (affected.length > 0) {
-      // Require a destination state to reassign affected tasks to.
-      const destination = req.body && req.body.destination;
-      if (!destination || typeof destination !== 'string') {
-        return res.status(400).json({
-          error: `Cannot delete workflow state '${id}': ${affected.length} task(s) reference it. Provide a 'destination' state id in the request body.`
-        });
-      }
-      const destExists = workflow.some((s) => s.id === destination);
-      if (!destExists) {
-        return res.status(400).json({
-          error: `Destination workflow state '${destination}' does not exist`
-        });
-      }
-      // Reassign affected tasks to the destination state and persist.
-      const reassigned = tasks.map((t) =>
-        t && t.column === id ? { ...t, column: destination, updatedAt: nowIso() } : t
-      );
-      await writeCollection(TASKS_FILE, reassigned);
-    }
-
-    // Delete the state and persist the workflow.
-    workflow.splice(stateIndex, 1);
-    await writeCollection(WORKFLOW_FILE, workflow);
-    res.status(200).json({ ok: true, workflow });
+    res.json(await db.getAllBoards());
   } catch (err) {
-    console.error('DELETE /api/workflow/:id failed:', err.message);
+    console.error('GET /api/boards failed:', err.message);
+    res.status(500).json({ error: 'Failed to read boards' });
+  }
+});
+
+app.get('/api/boards/:boardId', async (req, res) => {
+  try {
+    const board = await db.getBoardById(req.params.boardId);
+    if (!board) return res.status(404).json({ error: 'Board not found' });
+    res.json(board);
+  } catch (err) {
+    console.error('GET /api/boards/:boardId failed:', err.message);
+    res.status(500).json({ error: 'Failed to read board' });
+  }
+});
+
+app.post('/api/boards', async (req, res) => {
+  try {
+    if (!validBoards(req.body)) {
+      return res.status(400).json({ error: 'Boards must contain one or more valid, uniquely identified entries' });
+    }
+    await db.saveAllBoards(req.body);
+    res.status(200).json({ ok: true, count: req.body.length });
+  } catch (err) {
+    console.error('POST /api/boards failed:', err.message);
+    res.status(500).json({ error: 'Failed to write boards' });
+  }
+});
+
+app.put('/api/boards/:boardId', async (req, res) => {
+  try {
+    const existing = await db.getBoardById(req.params.boardId);
+    if (!existing) {
+      return res.status(404).json({ error: 'Board not found' });
+    }
+    const updated = { ...existing, ...req.body, id: req.params.boardId, updatedAt: nowIso() };
+    if (!validBoard(updated)) {
+      return res.status(400).json({ error: 'Invalid board update' });
+    }
+    const board = await db.updateBoard(req.params.boardId, updated);
+    res.status(200).json({ ok: true, board });
+  } catch (err) {
+    console.error('PUT /api/boards/:boardId failed:', err.message);
+    res.status(500).json({ error: 'Failed to update board' });
+  }
+});
+
+app.delete('/api/boards/:boardId', async (req, res) => {
+  try {
+    const existing = await db.getBoardById(req.params.boardId);
+    if (!existing) {
+      return res.status(404).json({ error: 'Board not found' });
+    }
+    const boards = await db.getAllBoards();
+    const remaining = boards.filter(b => b.id !== req.params.boardId);
+    if (remaining.length === 0) {
+      return res.status(400).json({ error: 'Cannot delete the last remaining board' });
+    }
+    await db.deleteBoardCascade(req.params.boardId);
+    res.status(200).json({ ok: true, boards: remaining });
+  } catch (err) {
+    console.error('DELETE /api/boards/:boardId failed:', err.message);
+    res.status(500).json({ error: 'Failed to delete board' });
+  }
+});
+
+app.get('/api/boards/:boardId/tasks', async (req, res) => {
+  try {
+    const tasks = await db.getTasksByBoard(req.params.boardId);
+    res.json(tasks);
+  } catch (err) {
+    console.error('GET /api/boards/:boardId/tasks failed:', err.message);
+    res.status(500).json({ error: 'Failed to read tasks' });
+  }
+});
+
+app.post('/api/boards/:boardId/tasks', async (req, res) => {
+  try {
+    const incoming = Array.isArray(req.body) ? req.body : [];
+    await db.saveTasksForBoard(req.params.boardId, incoming);
+    res.status(200).json({ ok: true, count: incoming.length });
+  } catch (err) {
+    console.error('POST /api/boards/:boardId/tasks failed:', err.message);
+    res.status(500).json({ error: 'Failed to write tasks' });
+  }
+});
+
+app.get('/api/boards/:boardId/lanes', async (req, res) => {
+  try {
+    const lanes = await db.getLanesByBoard(req.params.boardId);
+    res.json(lanes);
+  } catch (err) {
+    console.error('GET /api/boards/:boardId/lanes failed:', err.message);
+    res.status(500).json({ error: 'Failed to read lanes' });
+  }
+});
+
+app.post('/api/boards/:boardId/lanes', async (req, res) => {
+  try {
+    const incoming = Array.isArray(req.body) ? req.body : [];
+    await db.saveLanesForBoard(req.params.boardId, incoming);
+    res.status(200).json({ ok: true, count: incoming.length });
+  } catch (err) {
+    console.error('POST /api/boards/:boardId/lanes failed:', err.message);
+    res.status(500).json({ error: 'Failed to write lanes' });
+  }
+});
+
+app.delete('/api/boards/:boardId/lanes/:laneId', async (req, res) => {
+  try {
+    const boardLanes = await db.getLanesByBoard(req.params.boardId);
+    const remaining = boardLanes.filter(l => l.id !== req.params.laneId);
+    if (remaining.length === boardLanes.length) {
+      return res.status(404).json({ error: 'Lane not found' });
+    }
+    if (remaining.length === 0) {
+      return res.status(400).json({ error: 'Cannot delete last lane' });
+    }
+    const tasks = await db.getTasksByBoard(req.params.boardId);
+    const affected = tasks.filter(t => t.laneId === req.params.laneId);
+    const replacementLaneId = req.body?.replacementLaneId;
+    if (affected.length > 0 && !remaining.some(l => l.id === replacementLaneId)) {
+      return res.status(400).json({ error: 'A valid replacement lane is required' });
+    }
+    const updatedTasks = affected.length > 0
+      ? tasks.map(t => t.laneId === req.params.laneId
+          ? { ...t, laneId: replacementLaneId, updatedAt: nowIso() }
+          : t)
+      : tasks;
+    await Promise.all([
+      db.saveTasksForBoard(req.params.boardId, updatedTasks),
+      db.saveLanesForBoard(req.params.boardId, remaining)
+    ]);
+    res.status(200).json({ ok: true, lanes: remaining });
+  } catch (err) {
+    console.error('DELETE /api/boards/:boardId/lanes/:laneId failed:', err.message);
+    res.status(500).json({ error: 'Failed to delete lane' });
+  }
+});
+
+app.get('/api/boards/:boardId/workflow', async (req, res) => {
+  try {
+    const workflow = await db.getWorkflowByBoard(req.params.boardId);
+    res.json(workflow);
+  } catch (err) {
+    console.error('GET /api/boards/:boardId/workflow failed:', err.message);
+    res.status(500).json({ error: 'Failed to read workflow' });
+  }
+});
+
+app.post('/api/boards/:boardId/workflow', async (req, res) => {
+  try {
+    const incoming = Array.isArray(req.body) ? req.body : [];
+    await db.saveWorkflowForBoard(req.params.boardId, incoming);
+    res.status(200).json({ ok: true, count: incoming.length });
+  } catch (err) {
+    console.error('POST /api/boards/:boardId/workflow failed:', err.message);
+    res.status(500).json({ error: 'Failed to write workflow' });
+  }
+});
+
+app.post('/api/boards/:boardId/workflow/delete', async (req, res) => {
+  try {
+    const { stateId, replacementStateId } = req.body || {};
+    const workflow = await db.getWorkflowByBoard(req.params.boardId);
+    const stateExists = workflow.some(state => state.id === stateId);
+    const nextWorkflow = workflow.filter(state => state.id !== stateId);
+    if (!stateExists || nextWorkflow.length === 0) {
+      return res.status(400).json({ error: 'Cannot delete this workflow state' });
+    }
+
+    const tasks = await db.getTasksByBoard(req.params.boardId);
+    const affectedTasks = tasks.filter(task => task.column === stateId);
+    if (affectedTasks.length > 0 && !nextWorkflow.some(state => state.id === replacementStateId)) {
+      return res.status(400).json({ error: 'A valid replacement state is required' });
+    }
+
+    const updatedTasks = affectedTasks.length
+      ? tasks.map(task => task.column === stateId
+          ? { ...task, column: replacementStateId, updatedAt: nowIso() }
+          : task)
+      : tasks;
+    if (affectedTasks.length > 0) {
+      await db.saveTasksForBoard(req.params.boardId, updatedTasks);
+    }
+
+    await db.saveWorkflowForBoard(req.params.boardId, nextWorkflow);
+    res.status(200).json({ ok: true, reassigned: affectedTasks.length, workflow: nextWorkflow });
+  } catch (err) {
+    console.error('POST /api/boards/:boardId/workflow/delete failed:', err.message);
     res.status(500).json({ error: 'Failed to delete workflow state' });
+  }
+});
+
+app.post('/api/workflow/delete', async (req, res) => {
+  try {
+    const { stateId, replacementStateId } = req.body || {};
+    const workflow = await db.getAllWorkflows();
+    const stateExists = workflow.some(state => state.id === stateId);
+    const nextWorkflow = workflow.filter(state => state.id !== stateId);
+    if (!stateExists || nextWorkflow.length === 0) {
+      return res.status(400).json({ error: 'Cannot delete this workflow state' });
+    }
+
+    const tasks = await db.getAllTasks();
+    const affectedTasks = tasks.filter(task => task.column === stateId);
+    if (affectedTasks.length > 0 && !nextWorkflow.some(state => state.id === replacementStateId)) {
+      return res.status(400).json({ error: 'A valid replacement state is required' });
+    }
+
+    const updatedTasks = affectedTasks.length
+      ? tasks.map(task => task.column === stateId ? { ...task, column: replacementStateId, updatedAt: nowIso() } : task)
+      : tasks;
+    if (affectedTasks.length > 0) await db.saveAllTasks(updatedTasks);
+    await db.saveAllWorkflows(nextWorkflow);
+    res.status(200).json({ ok: true, reassigned: affectedTasks.length, workflow: nextWorkflow });
+  } catch (err) {
+    console.error('POST /api/workflow/delete failed:', err.message);
+    res.status(500).json({ error: 'Failed to delete workflow state' });
+  }
+});
+
+// ---------- lanes routes ----------
+
+app.get('/api/lanes', async (req, res) => {
+  try {
+    res.json(await db.getAllLanes());
+  } catch (err) {
+    console.error('GET /api/lanes failed:', err.message);
+    res.status(500).json({ error: 'Failed to read lanes' });
+  }
+});
+
+app.post('/api/lanes', async (req, res) => {
+  try {
+    if (!validLanes(req.body)) {
+      return res.status(400).json({ error: 'Lanes must contain one or more valid, uniquely identified entries' });
+    }
+    await db.saveAllLanes(req.body);
+    res.status(200).json({ ok: true, count: req.body.length });
+  } catch (err) {
+    console.error('POST /api/lanes failed:', err.message);
+    res.status(500).json({ error: 'Failed to write lanes' });
+  }
+});
+
+app.post('/api/lanes/delete', async (req, res) => {
+  try {
+    const { laneId, replacementLaneId } = req.body || {};
+
+    const lanes = await db.getAllLanes();
+    const laneExists = lanes.some(l => l.id === laneId);
+    const nextLanes = lanes.filter(l => l.id !== laneId);
+
+    if (!laneExists || nextLanes.length === 0) {
+      return res.status(400).json({ error: 'Cannot delete the last remaining lane' });
+    }
+
+    const tasks = await db.getAllTasks();
+    const affectedTasks = tasks.filter(t => t.laneId === laneId);
+
+    if (affectedTasks.length > 0 && !nextLanes.some(l => l.id === replacementLaneId)) {
+      return res.status(400).json({ error: 'A valid replacement lane is required when the lane contains cards' });
+    }
+
+    const updatedTasks = affectedTasks.length
+      ? tasks.map(t => t.laneId === laneId ? { ...t, laneId: replacementLaneId, updatedAt: nowIso() } : t)
+      : tasks;
+
+    if (affectedTasks.length > 0) await db.saveAllTasks(updatedTasks);
+    await db.saveAllLanes(nextLanes);
+
+    res.status(200).json({ ok: true, reassigned: affectedTasks.length, lanes: nextLanes });
+  } catch (err) {
+    console.error('POST /api/lanes/delete failed:', err.message);
+    res.status(500).json({ error: 'Failed to delete lane' });
   }
 });
 
@@ -230,7 +505,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ---------- boot ----------
 async function start() {
-  await ensureDataDir();
   await ensureSeeded();
   app.listen(PORT, () => {
     console.log(`repo-ops-tracker server listening on http://localhost:${PORT}`);

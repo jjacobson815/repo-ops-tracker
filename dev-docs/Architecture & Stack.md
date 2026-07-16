@@ -6,7 +6,7 @@ The **repo-ops-tracker** uses a lightweight, low-overhead stack designed for loc
 
 ```mermaid
 graph TD
-    subgraph Browser (Client)
+    subgraph Browser[Client]
         HTML[index.html] -->|Loads| AppJS[js/app.js]
         AppJS -->|Imports| ESM[ES Modules: dashboard, board, library, modal]
         AppJS -->|Queries| API[js/api.js]
@@ -15,12 +15,11 @@ graph TD
     subgraph Docker Container
         Express[Express Server] -->|Serves| Static[Static Files in public/]
         API -->|REST Calls| Express
-        Express -->|Read/Write| JSON[data/tasks.json & data/library.json]
+        Express -->|Read/Write| SQLite[(SQLite dev.db via Prisma)]
     end
 
-    subgraph Host Filesystem
-        JSON -.->|Mounted Volume| Host[data/ directory on host]
-    end
+    SQLite -.->|Legacy mirror| JSON[data/*.json]
+    SQLite -.->|Persisted| Host[data/ directory on host]
 ```
 
 ## Stack Components
@@ -31,11 +30,13 @@ Instead of bundling packages using tools like Webpack, Vite, or Rollup, the brow
 - Modules are loaded asynchronously, making code organization modular without compile overhead.
 
 ### 2. Backend (Node.js & Express)
-- Exposes a REST API to manipulate JSON stores.
+- Exposes a REST API backed by a Prisma/SQLite persistence layer (legacy JSON files are mirrors only).
 - Serves the `public/` folder statically.
-- Keeps dependencies minimal (only `express`).
+- Keeps dependencies minimal: `express` at runtime plus `@prisma/client`, with `prisma` as a dev dependency.
 
 ### 3. State & Persistence
 - Eliminates browser-only `localStorage` for system resilience.
-- Auto-saves updates as flat JSON arrays in files.
-- Mounted volume in [[Docker & Persistence]] links database files to host disk.
+- Persists all state in a SQLite database (`data/dev.db`) via Prisma, which is the source of truth.
+- On boot, the DB layer runs `prisma migrate deploy` and derives `DATABASE_URL` from `DATA_DIR` (default `./data`, or `/app/data` in Docker).
+- Legacy JSON files under `data/` are written as mirrors for backward compatibility only and may lag the database.
+- Mounted volume in [[Docker & Persistence]] links the database file to the host disk.

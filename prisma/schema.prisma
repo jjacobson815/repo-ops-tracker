@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Board {
+  id          String           @id
+  title       String
+  description String
+  createdAt   String
+  updatedAt   String
+  isDefault   Boolean          @default(false)
+  tasks       Task[]
+  workflows   WorkflowState[]
+  lanes       Lane[]
+}
+
+model WorkflowState {
+  id         String  @id
+  label      String
+  accent     String
+  isComplete Boolean @default(false)
+  boardId    String
+  board      Board   @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  sortOrder  Int
+}
+
+model Lane {
+  id        String  @id
+  boardId   String
+  board     Board   @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  label     String
+  accent    String
+  sortOrder Int
+}
+
+model Task {
+  id          String   @id
+  title       String
+  repoName    String   @default("")
+  repoUrl     String   @default("")
+  agent       String   @default("")
+  agentCustom String   @default("")
+  column      String   @default("")
+  laneId      String   @default("general")
+  boardId     String
+  board       Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  tags        String
+  notes       String   @default("")
+  createdAt   String
+  updatedAt   String
+}
+
+model LibraryEntry {
+  id        String   @id
+  title     String
+  category  String
+  body      String
+  createdAt String
+  updatedAt String
+}

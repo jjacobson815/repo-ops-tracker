@@ -182,10 +182,11 @@ async function main() {
       record('POST /api/library persists to memory', ok, `postStatus=${post.status}, getLen=${Array.isArray(get.body) ? get.body.length : 'n/a'}`);
     }
 
-    // e. Confirm files written to disk (non-empty / parseable)
+    // e. Confirm files written to disk (non-empty / parseable) and SQLite DB created
     {
       const tasksPath = path.join(TEST_DATA_DIR, 'tasks.json');
       const libraryPath = path.join(TEST_DATA_DIR, 'library.json');
+      const dbPath = path.join(TEST_DATA_DIR, 'dev.db');
       let ok = true;
       let detail = '';
       try {
@@ -195,13 +196,14 @@ async function main() {
         const libraryParsed = JSON.parse(libraryRaw);
         const tasksOk = tasksRaw.trim().length > 0 && Array.isArray(tasksParsed) && tasksParsed.length === 1;
         const libraryOk = libraryRaw.trim().length > 0 && Array.isArray(libraryParsed) && libraryParsed.length === 1;
-        ok = tasksOk && libraryOk;
-        detail = `tasks.json len=${tasksParsed.length}, library.json len=${libraryParsed.length}`;
+        const dbStats = await fsp.stat(dbPath);
+        ok = tasksOk && libraryOk && dbStats.isFile();
+        detail = `tasks.json len=${tasksParsed.length}, library.json len=${libraryParsed.length}, db=${dbStats.size} bytes`;
       } catch (err) {
         ok = false;
         detail = 'read/parse error: ' + err.message;
       }
-      record('data files written to disk', ok, detail);
+      record('SQLite database and data files written to disk', ok, detail);
     }
   } catch (err) {
     record('test execution', false, err.message);
