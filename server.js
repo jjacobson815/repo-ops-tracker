@@ -195,6 +195,16 @@ app.post('/api/library', async (req, res) => {
   }
 });
 
+app.get('/api/tasks/:taskId/library', async (req, res) => {
+  try {
+    const entries = await db.getLibraryEntriesForTask(req.params.taskId);
+    res.json(entries);
+  } catch (err) {
+    console.error('GET /api/tasks/:taskId/library failed:', err.message);
+    res.status(500).json({ error: 'Failed to read task library links' });
+  }
+});
+
 app.get('/api/workflow', async (req, res) => {
   try {
     res.json(await db.getAllWorkflows());

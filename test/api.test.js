@@ -250,6 +250,34 @@ async function main() {
       record('KI-01: creating 2nd board preserves default board lanes/workflow/tasks', ok,
         `postStatus=${post.status}, b2Present=${b2Present}, lanes=${laneCountBefore}->${laneCountAfter}, wf=${wfCountBefore}->${wfCountAfter}, tasks=${taskCountBefore}->${taskCountAfter}`);
     }
+
+    // g. entry-task link regression: an unrelated library save must not drop
+    //    existing entryId<->taskId links.
+    {
+      const entriesRes = await getJson('/api/library');
+      const entries = Array.isArray(entriesRes.body) ? entriesRes.body : [];
+      const tasksRes = await getJson('/api/boards/default/tasks');
+      const tasks = Array.isArray(tasksRes.body) ? tasksRes.body : [];
+      const target = entries[0];
+      const taskId = tasks[0] && tasks[0].id;
+      if (target && taskId) {
+        target.taskIds = [taskId];
+        await postJson('/api/library', entries);
+        // unrelated save: bump an unrelated entry's title, re-POST full array
+        const rereadRes = await getJson('/api/library');
+        const reread = Array.isArray(rereadRes.body) ? rereadRes.body : [];
+        if (reread[1]) reread[1].title = reread[1].title + ' (touched)';
+        await postJson('/api/library', reread);
+        const finalRes = await getJson('/api/library');
+        const final = Array.isArray(finalRes.body) ? finalRes.body : [];
+        const finalTarget = final.find(e => e.id === target.id);
+        const ok = finalTarget && Array.isArray(finalTarget.taskIds) && finalTarget.taskIds.includes(taskId);
+        record('entry-task link survives unrelated library save', ok,
+          `linkPresent=${ok}, taskIds=${JSON.stringify(finalTarget ? finalTarget.taskIds : null)}`);
+      } else {
+        record('entry-task link survives unrelated library save', false, 'no target entry or task available to link');
+      }
+    }
   } catch (err) {
     record('test execution', false, err.message);
     console.error(err);

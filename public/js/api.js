@@ -39,6 +39,11 @@ export async function saveLibrary(library) {
   });
 }
 
+export async function getLibraryForTask(taskId) {
+  const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/library`);
+  return res.json();
+}
+
 export async function getWorkflow(boardId) {
   const res = await fetch(`/api/boards/${boardId}/workflow`);
   return res.json();

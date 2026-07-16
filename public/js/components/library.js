@@ -32,6 +32,11 @@ function wireStatic(){
   if(cancelBtn) cancelBtn.addEventListener('click', ()=> closeLibModal(ctxRef));
   const delBtn = getEl('libDeleteBtn');
   if(delBtn) delBtn.addEventListener('click', ()=> deleteCurrentLib(ctxRef));
+  const typeSel = getEl('l-type');
+  if(typeSel) typeSel.addEventListener('change', ()=>{
+    const langField = getEl('l-lang-field');
+    if(langField) langField.style.display = typeSel.value === 'snippet' ? 'block' : 'none';
+  });
 }
 
 export function renderLibrary(state, ctx){
@@ -56,16 +61,23 @@ export function renderLibrary(state, ctx){
     </div>`;
     return;
   }
-  grid.innerHTML = items.map(i=>`
+  grid.innerHTML = items.map(i=>{
+    const taskChips = (i.taskIds||[]).map(tid=>{
+      const t = (ctx.state.tasks||[]).find(x=>x.id===tid);
+      return t ? `<span class="lib-task-chip" data-task="${t.id}">${escapeHtml(t.title)}</span>` : '';
+    }).join('');
+    return `
     <div class="lib-card">
-      <div class="cat">${escapeHtml(i.category)}</div>
+      <div class="cat">${escapeHtml(i.category)}${i.type==='snippet' ? ` · ${escapeHtml(i.lang||'snippet')}` : ''}</div>
       <div class="title">${escapeHtml(i.title)}</div>
       <div class="body-preview">${escapeHtml(i.body)}</div>
+      ${taskChips ? `<div class="lib-task-chips">${taskChips}</div>` : ''}
       <div class="lib-actions">
         <button class="btn" data-copy="${i.id}">copy</button>
         <button class="btn ghost" data-edit="${i.id}">edit</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   grid.querySelectorAll('[data-copy]').forEach(btn=>{
     btn.addEventListener('click', ()=> copyLibBody(btn.dataset.copy, ctx));
@@ -73,11 +85,25 @@ export function renderLibrary(state, ctx){
   grid.querySelectorAll('[data-edit]').forEach(btn=>{
     btn.addEventListener('click', ()=> openLibModal(btn.dataset.edit, ctx));
   });
+  grid.querySelectorAll('[data-task]').forEach(chip=>{
+    chip.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      if(ctx.goToTask) ctx.goToTask(chip.dataset.task);
+    });
+  });
 }
 
 export function openLibModal(id, ctx){
   const state = ctx.state;
   state.currentLibId = id;
+
+  const taskSel = getEl('l-tasks');
+  if(taskSel){
+    taskSel.innerHTML = (state.tasks||[]).map(t=>
+      `<option value="${t.id}">${escapeHtml(t.title)}</option>`
+    ).join('');
+  }
+
   if(id){
     const i = state.library.find(x=>x.id===id);
     if(!i) return;
@@ -85,6 +111,14 @@ export function openLibModal(id, ctx){
     getEl('l-title').value = i.title || '';
     getEl('l-cat').value = i.category || 'Other';
     getEl('l-body').value = i.body || '';
+    getEl('l-type').value = i.type || 'instruction';
+    getEl('l-lang').value = i.lang || 'bash';
+    const langField = getEl('l-lang-field');
+    if(langField) langField.style.display = (i.type === 'snippet') ? 'block' : 'none';
+    if(taskSel){
+      const linked = new Set(i.taskIds || []);
+      [...taskSel.options].forEach(o => { o.selected = linked.has(o.value); });
+    }
     const delBtn = getEl('libDeleteBtn');
     if(delBtn) delBtn.style.display = 'inline-block';
   } else {
@@ -92,6 +126,10 @@ export function openLibModal(id, ctx){
     getEl('l-title').value = '';
     getEl('l-cat').value = 'Orientation';
     getEl('l-body').value = '';
+    getEl('l-type').value = 'instruction';
+    const langField = getEl('l-lang-field');
+    if(langField) langField.style.display = 'none';
+    if(taskSel){ [...taskSel.options].forEach(o => { o.selected = false; }); }
     const delBtn = getEl('libDeleteBtn');
     if(delBtn) delBtn.style.display = 'none';
   }
@@ -110,10 +148,16 @@ export function saveLibFromModal(ctx){
   const state = ctx.state;
   const title = getEl('l-title').value.trim();
   if(!title){ showToast('title required'); return; }
+  const taskSel = getEl('l-tasks');
+  const taskIds = taskSel ? [...taskSel.selectedOptions].map(o=>o.value) : [];
+  const type = getEl('l-type')?.value || 'instruction';
   const payload = {
     title,
     category: getEl('l-cat').value,
     body: getEl('l-body').value,
+    type,
+    lang: type === 'snippet' ? (getEl('l-lang')?.value || 'bash') : null,
+    taskIds,
     updatedAt: nowIso()
   };
   if(state.currentLibId){

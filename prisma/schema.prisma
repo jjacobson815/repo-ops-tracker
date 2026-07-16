@@ -53,13 +53,26 @@ model Task {
   notes       String   @default("")
   createdAt   String
   updatedAt   String
+  taskLinks   LibraryEntryTask[]
 }
 
 model LibraryEntry {
   id        String   @id
+  type      String   @default("instruction")
+  lang      String?
   title     String
   category  String
   body      String
   createdAt String
   updatedAt String
+  taskLinks LibraryEntryTask[]
+}
+
+model LibraryEntryTask {
+  entryId String
+  taskId  String
+  entry   LibraryEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  task    Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@id([entryId, taskId])
 }
