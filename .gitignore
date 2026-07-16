@@ -13,15 +13,6 @@ node_modules/
 *.sqlite3
 
 # ---------------------------------------------------------------------------
-# Feature: "usesPromptEngineeringWorkflow" (Prompt Engineering Workflow)
-# The following file implements the usesPromptEngineeringWorkflow feature flag
-# and its related helpers (promptEngineeringWorkflow / PromptEngineeringWorkflow /
-# prompt_engineering_workflow). It was introduced as untracked/new and must NOT
-# be pushed to the remote.
-# ---------------------------------------------------------------------------
-scripts/seed-board-data.js
-
-# ---------------------------------------------------------------------------
 # Zero-Trust: never commit secrets or environment files
 # ---------------------------------------------------------------------------
 .env
@@ -50,3 +41,9 @@ out/
 *.exe
 *.dll
 *.class
+
+# Logs / coverage
+*.log
+npm-debug.log*
+coverage/
+.nyc_output/
