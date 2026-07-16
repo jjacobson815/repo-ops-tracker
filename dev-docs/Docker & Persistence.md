@@ -33,8 +33,18 @@ services:
 > Container filesystems are ephemeral by default. If a container is rebuilt or destroyed, all local modifications inside the container are lost.
 
 To prevent data loss, the host directory `./data` is mapped to `/app/data` inside the container:
-- The backend writes files directly to `/app/data/tasks.json` and `/app/data/library.json`.
-- These are reflected in real-time in the host system's `./data/` folder.
-- You can backup, copy, or version control your databases by working directly with the files in `./data/`.
+- The backend writes the SQLite database to `/app/data/dev.db`.
+- The existing JSON files remain available as legacy import sources under `./data/`.
+- You can backup, copy, or inspect the database file directly in `./data/`.
+
+The container runs `npx prisma generate` at build time (see `Dockerfile`), and the
+server runs `prisma migrate deploy` automatically on boot, so the SQLite schema
+is applied without manual steps. To import pre-existing legacy JSON data into the
+database, run `npm run migrate:json` locally (or exec it inside the container).
+
+> [!TIP]
+> The Docker image copies source files during build, and the compose service only
+> mounts `./data`. Code changes in the repo therefore require rebuilding the
+> image via `docker compose up --build` before the updated app will run.
 
 See [[Backend API Reference]] for more details on the serialization schemas.

@@ -352,16 +352,24 @@ function refreshBoardSelector() {
 
 export async function switchBoard(boardId) {
   if (!boardId || state.currentBoardId === boardId) return;
-  state.currentBoardId = boardId;
-  const [tasks, workflow, lanes] = await Promise.all([
-    getBoardTasks(boardId),
-    getBoardWorkflow(boardId),
-    getBoardLanes(boardId)
-  ]);
-  state.tasks = Array.isArray(tasks) ? tasks : [];
-  COLUMNS.splice(0, COLUMNS.length, ...(Array.isArray(workflow) ? workflow : []));
-  LANES.splice(0, LANES.length, ...(Array.isArray(lanes) ? lanes : []));
-  renderAll();
+  const previousBoardId = state.currentBoardId;
+  try {
+    const [tasks, workflow, lanes] = await Promise.all([
+      getBoardTasks(boardId),
+      getBoardWorkflow(boardId),
+      getBoardLanes(boardId)
+    ]);
+
+    state.currentBoardId = boardId;
+    state.tasks = Array.isArray(tasks) ? tasks : [];
+    COLUMNS.splice(0, COLUMNS.length, ...(Array.isArray(workflow) ? workflow : []));
+    LANES.splice(0, LANES.length, ...(Array.isArray(lanes) ? lanes : []));
+    renderAll();
+  } catch (err) {
+    state.currentBoardId = previousBoardId;
+    refreshBoardSelector();
+    showToast('failed to switch board');
+  }
 }
 
 // ---- boot -----------------------------------------------------------------

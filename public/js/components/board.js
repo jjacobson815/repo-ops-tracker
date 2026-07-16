@@ -62,7 +62,12 @@ export function renderBoard(state, ctx) {
   const LANES = ctx.LANES;
 
   if (!COLUMNS.length || !LANES.length) {
-    boardEl.innerHTML = '<div class="empty-col" style="padding:40px;">loading…</div>';
+    const message = !COLUMNS.length && !LANES.length
+      ? 'This board has no workflow states or swimlanes yet. Add states in manage workflow and lanes in manage swimlanes.'
+      : !COLUMNS.length
+        ? 'This board has no workflow states yet. Add states in manage workflow.'
+        : 'This board has no swimlanes yet. Add lanes in manage swimlanes.';
+    boardEl.innerHTML = `<div class="empty-col" style="padding:40px;">${escapeHtml(message)}</div>`;
     return;
   }
 
