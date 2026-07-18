@@ -111,10 +111,10 @@ import {
   getLanes,
   getBoardLanes,
   saveLanes as apiSaveLanes,
-  deleteBoardLane,
   getBoardWorkflow,
   saveBoardWorkflow,
-  deleteBoardWorkflowState
+  deleteBoardWorkflowState,
+  importBoard as apiImportBoard
 } from './api.js';
 import { renderDashboard } from './components/dashboard.js';
 import {
@@ -135,6 +135,7 @@ import {
 import { askConfirm, closeConfirm, showToast, flashStatus } from './components/modal.js';
 import { initWorkflow } from './components/workflow.js';
 import { initLanes } from './components/lanes.js';
+import { initBoards } from './components/boards.js';
 
 // Local HTML-escaping helper (this project duplicates this per-file rather
 // than sharing a single util module). Used to safely interpolate untrusted
@@ -187,6 +188,8 @@ const ctx = {
   saveLanes,
   deleteLane,
   renderAll,
+  getAllTasksAcrossBoards, fetchBoardBundleSource, importBoardBundle,
+  renameBoard, removeBoard, reloadBoards,
 };
 
 // ---- persistence wrappers -------------------------------------------------
@@ -267,6 +270,78 @@ export async function deleteLane(laneId, replacementLaneId) {
   } catch (e) {
     flashStatus('save failed');
     return { ok: false, error: 'could not delete lane' };
+  }
+}
+
+export async function getAllTasksAcrossBoards() {
+  try {
+    const tasks = await getTasks();
+    return Array.isArray(tasks) ? tasks : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function fetchBoardBundleSource(boardId) {
+  const [board, tasks, workflow, lanes] = await Promise.all([
+    getBoard(boardId),
+    getBoardTasks(boardId),
+    getBoardWorkflow(boardId),
+    getBoardLanes(boardId)
+  ]);
+  return {
+    board,
+    tasks: Array.isArray(tasks) ? tasks : [],
+    workflow: Array.isArray(workflow) ? workflow : [],
+    lanes: Array.isArray(lanes) ? lanes : []
+  };
+}
+
+export async function importBoardBundle(bundle) {
+  try {
+    const res = await apiImportBoard(bundle);
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: body.error };
+    return { ok: true, boardId: body.boardId };
+  } catch (e) {
+    return { ok: false, error: 'could not import board' };
+  }
+}
+
+export async function renameBoard(boardId, patch) {
+  try {
+    const res = await updateBoard(boardId, patch);
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: body.error };
+    return { ok: true, board: body.board };
+  } catch (e) {
+    return { ok: false, error: 'could not rename board' };
+  }
+}
+
+export async function removeBoard(boardId) {
+  try {
+    const res = await deleteBoard(boardId);
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: body.error };
+    return { ok: true, boards: body.boards };
+  } catch (e) {
+    return { ok: false, error: 'could not delete board' };
+  }
+}
+
+export async function reloadBoards(selectBoardId) {
+  try {
+    state.boards = await getBoards();
+    const targetId = selectBoardId && state.boards.some((b) => b.id === selectBoardId)
+      ? selectBoardId
+      : state.currentBoardId;
+    if (targetId && targetId !== state.currentBoardId) {
+      await switchBoard(targetId);
+    }
+    refreshBoardSelector();
+  } catch (e) {
+    showToast('failed to reload boards');
   }
 }
 
@@ -396,6 +471,7 @@ function boot() {
   wireBoardSelector();
   initWorkflow(ctx);
   initLanes(ctx);
+  initBoards(ctx);
   initApp();
 }
 

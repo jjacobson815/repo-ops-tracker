@@ -64,3 +64,10 @@ For architecture / backend API / Docker / frontend docs, see [dev-docs/Index.md]
   user data into `innerHTML` should follow the same escape-before-render pattern
   (see the canonical implementation in
   [`public/js/components/lanes.js`](public/js/components/lanes.js:9)).
+- **Server-generated IDs for `POST /api/boards/import` are intentional.** This is
+  a deliberate, documented exception to the repo's usual "ids generated
+  client-side" convention. The import endpoint accepts untrusted file content and
+  **always creates a new board** with server-generated IDs via `uid()` in
+  [`server.js`](server.js); it never merges/overwrites. The exported bundle carries
+  **no db ids** — workflow/lane references are by array index, resolved to fresh
+  ids at write time. Do **not** "fix" this back to client-side id generation.

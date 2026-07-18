@@ -25,4 +25,5 @@ JavaScript files are placed in `public/js/`:
 - `library.js`: Renders instructions cards, list searches, and copy buttons.
 - `workflow.js`: Renders the workflow/column configuration UI for a board — lists workflow states with editable labels, colors, completion flags, and reordering; supports adding, saving, and deleting states (with task reassignment on delete).
 - `lanes.js`: Renders the lane configuration UI for a board — lists lanes with editable labels, colors, and reordering; supports adding, saving, and deleting lanes (with task reassignment on delete).
+- `boards.js`: Renders the manage-boards modal — supports creating, renaming, deleting, duplicating, exporting, and importing boards.
 - `modal.js`: Controls visual states of inputs, task/instruction forms, and manages custom confirm triggers (before running dangerous delete actions).

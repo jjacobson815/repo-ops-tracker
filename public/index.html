@@ -20,6 +20,7 @@
     <button class="tab-btn" data-tab="library">instructions</button>
   </div>
   <div class="top-actions">
+    <button class="btn ghost" id="manageBoardsBtn">manage boards</button>
     <select id="boardSelector" class="board-selector"></select>
     <span id="statusPill" class="status-pill">saved</span>
   </div>
@@ -107,6 +108,34 @@
   </div>
 </div>
 
+<!-- BOARDS MODAL -->
+<div class="modal-overlay" id="boardsModalOverlay">
+  <div class="modal">
+    <h2>manage boards</h2>
+    <p class="modal-help">Each board has its own lanes, workflow, and cards. Export a board to back it up or share it; import a JSON export to recreate it as a new board.</p>
+    <div id="boardsList" class="workflow-state-list"></div>
+    <div id="boardDeletePanel" class="workflow-delete-panel" hidden>
+      <div id="boardDeleteMessage" class="modal-help"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="cancelDeleteBoardBtn">cancel</button>
+        <button class="btn danger" id="confirmDeleteBoardBtn">delete board</button>
+      </div>
+    </div>
+    <div class="workflow-add">
+      <div class="field"><label>new board title</label><input id="newBoardTitle" type="text" maxlength="200" placeholder="e.g. Trace Extractor — Live Validation"></div>
+      <div class="field"><label>description</label><input id="newBoardDescription" type="text" maxlength="500" placeholder="optional"></div>
+      <button class="btn primary" id="addBoardBtn">+ new board</button>
+    </div>
+    <div class="workflow-add">
+      <input type="file" id="importBoardFile" accept="application/json,.json" hidden>
+      <button class="btn ghost" id="importBoardBtn">+ import board from JSON</button>
+    </div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <button class="btn ghost" id="boardsCloseBtn">done</button>
+    </div>
+  </div>
+</div>
+
 <!-- LIBRARY -->
 <div class="view" id="view-library">
   <div class="lib-toolbar">
@@ -164,7 +193,27 @@
       <label>category</label>
       <select id="l-cat"><option>Orientation</option><option>Docs Generation</option><option>Build / Test</option><option>Code Change</option><option>Review</option><option>Other</option></select>
     </div>
+    <div class="field">
+      <label>type</label>
+      <select id="l-type">
+        <option value="instruction">instruction</option>
+        <option value="snippet">snippet</option>
+      </select>
+    </div>
+    <div class="field" id="l-lang-field" style="display:none;">
+      <label>language</label>
+      <select id="l-lang">
+        <option value="bash">bash</option>
+        <option value="dockerfile">dockerfile</option>
+        <option value="sql">sql</option>
+        <option value="js">js</option>
+      </select>
+    </div>
     <div class="field"><label>prompt / instructions</label><textarea id="l-body" style="min-height:160px;" placeholder="the actual text you paste to the agent..."></textarea></div>
+    <div class="field">
+      <label>linked tasks</label>
+      <select id="l-tasks" multiple size="4"></select>
+    </div>
     <div class="modal-actions">
       <div><button class="btn danger" id="libDeleteBtn" style="display:none;">delete</button></div>
       <div class="right">
