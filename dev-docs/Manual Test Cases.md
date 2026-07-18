@@ -38,12 +38,17 @@
 | LIB-02 | Use (copy) a library prompt entry | UI | Requires manual run |
 | LIB-03 | Delete a library prompt entry | API | PASS |
 | PER-01 | Restart container, data survives | Docker/API | API restart PASS; Docker manual |
-| PER-02 | Fresh DATA_DIR migration, no openssl error | Docker/API | API fresh boot PASS; Docker manual |
+| PER-02 | Fresh DATA_DIR migration, no openssl error | Docker/API | PASS — Docker build executed this session (no openssl error; new migration `20260716113313_add_entry_task_links` applied; 3 seeded entries w/ type/lang/taskIds; general lane + 5 wf states) |
 | DOCK-01 | Clean-clone `docker compose up --build` | Docker | Requires manual run (node boot PASS) |
 | DOCK-02 | No console errors on boot | Docker/API | API boot PASS; Docker log manual |
+| LIB-04 | Link a library entry to a task | UI | Requires manual run (API round-trip PASS) |
+| LIB-05 | Task chip renders and is clickable on card | UI | Requires manual run (API data PASS) |
+| LIB-06 | Entry type toggle shows/hides language field | UI | Requires manual run |
+| LIB-07 | Snippet entry displays language badge on card | UI | Requires manual run |
+| LIB-08 | Deleting a task removes its library links (cascade) | API | PASS |
 
-**Executed totals:** 19 backend/API assertions PASS, 0 FAIL.
-UI/Docker interactions: 8 require manual run (underlying APIs verified where noted).
+**Executed totals:** 20 backend/API assertions PASS, 0 FAIL (includes the new automated `entry-task link survives unrelated library save` case and the LIB-08 cascade check).
+UI/Docker interactions: 12 require manual run (underlying APIs verified where noted).
 
 ---
 
@@ -266,6 +271,51 @@ UI/Docker interactions: 8 require manual run (underlying APIs verified where not
   3. `GET /api/library` — confirm it is gone.
 - **Expected:** Entry removed.
 - **Result: PASS** (executed TC-L3).
+
+### LIB-04 — Link a library entry to a task (UI)
+- **Preconditions:** At least one task exists on the `default` board; at least one library entry exists.
+- **Steps:**
+  1. Open the Library tab, edit an existing entry (or create a new one).
+  2. In the "linked tasks" multi-select, select one or more tasks. Save.
+  3. Reload the page, re-open the same entry for edit.
+- **Expected:** The previously-selected task(s) remain selected in the multi-select after reload (confirms round-trip through `taskIds` persists correctly, not just held in memory).
+- **Result: Requires manual run (UI).** The underlying round-trip is API-verified: `saveAllLibraryEntries` persists `taskIds` and `getAllLibraryEntries` returns them (confirmed by the automated `entry-task link survives unrelated library save` case and the LIB-08 cascade check executed this session). The in-browser multi-select persistence across reload is browser-only and was not driven head-less.
+
+### LIB-05 — Task chip renders and is clickable on the library card
+- **Preconditions:** An entry with ≥1 linked task exists (from LIB-04).
+- **Steps:**
+  1. View the Library tab grid.
+  2. Confirm a chip showing the linked task's title appears on the card, below the body preview.
+  3. Click the chip.
+- **Expected:** Chip renders with the task's title. Clicking it either navigates to the task (if `ctx.goToTask` routing exists) or does nothing visible and throws no console error (if that routing hook isn't wired yet — it was explicitly out of scope for the implementation task). Note which behavior is observed.
+- **Result: Requires manual run (UI).** Underlying data verified: `GET /api/library` returns `taskIds` per entry (seen live in the PER-02 Docker run and the LIB-08 API run this session). The chip render + click handler (`ctx.goToTask` guarded, [`public/js/components/library.js`](public/js/components/library.js:70)) is browser-only; `ctx.goToTask` routing is explicitly out of scope, so clicking the chip is expected to do nothing visible and throw no console error. Not driven head-less this session.
+
+### LIB-06 — Entry type toggle shows/hides language field
+- **Preconditions:** Library modal is open (new or edit).
+- **Steps:**
+  1. In the entry modal, change "type" from `instruction` to `snippet`.
+  2. Confirm the "language" field appears.
+  3. Switch back to `instruction`.
+  4. Confirm the "language" field hides again.
+- **Expected:** Field visibility toggles correctly with no layout glitch.
+- **Result: Requires manual run (UI).** The toggle logic lives in `wireStatic` (the `typeSel` change listener, [`public/js/components/library.js`](public/js/components/library.js:26)); not driven head-less. No application code was modified during verification.
+
+### LIB-07 — Snippet entry displays language badge on card
+- **Preconditions:** An entry saved with `type: snippet` and a `lang` value (e.g. `bash`).
+- **Steps:**
+  1. View the Library tab grid.
+  2. Confirm the card's category line shows the category **and** the lang value (e.g. `Build / Test · bash`), distinguishing it from an `instruction`-type card which shows category only.
+- **Expected:** Badge format matches; instruction-type cards are unaffected (no ` · ` suffix).
+- **Result: Requires manual run (UI).** Card template renders `category · lang` only when `type==='snippet'` ([`public/js/components/library.js`](public/js/components/library.js:59)); instruction-type cards show category only. Not driven head-less this session.
+
+### LIB-08 — Deleting a task removes its library links (cascade check)
+- **Preconditions:** A task with ≥1 linked library entry exists.
+- **Steps:**
+  1. Note the entry's linked task count.
+  2. Delete the task (`POST /api/boards/:boardId/tasks` with the array minus that task, per the existing WF-03 pattern).
+  3. `GET /api/library` — check the entry's `taskIds`.
+- **Expected:** The deleted task's id is no longer present in any entry's `taskIds` (confirms `onDelete: Cascade` on `LibraryEntryTask.taskId` is actually firing, not just declared in the schema).
+- **Result: PASS** (executed via API this session). Created task `lib08task`, linked it to a library entry (`taskIds=["lib08task"]`), then deleted the task via `POST /api/boards/default/tasks` (array minus that task). Re-`GET /api/library` showed the entry's `taskIds=[]` — the deleted task id is no longer present, confirming `onDelete: Cascade` on `LibraryEntryTask.taskId` fires (not just declared). No application code was modified.
 
 ---
 

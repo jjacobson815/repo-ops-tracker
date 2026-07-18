@@ -49,6 +49,22 @@ async function postJson(pathname, payload) {
   return { status: res.status, body };
 }
 
+async function putJson(pathname, payload) {
+  const res = await fetch(BASE_URL + pathname, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const body = await res.json().catch(() => null);
+  return { status: res.status, body };
+}
+
+async function deleteJson(pathname) {
+  const res = await fetch(BASE_URL + pathname, { method: 'DELETE' });
+  const body = await res.json().catch(() => null);
+  return { status: res.status, body };
+}
+
 async function waitForServer(timeoutMs) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -277,6 +293,261 @@ async function main() {
       } else {
         record('entry-task link survives unrelated library save', false, 'no target entry or task available to link');
       }
+    }
+
+    // ---- Board import (IMP-*) and board management (BM-*) tests ----
+    // Portable import bundles carry NO db ids; workflow/lanes are referenced
+    // by array index. The server generates fresh ids and maps tasks by index.
+
+    // IMP-01: import a crafted bundle -> new board has identical lanes/workflow/cards
+    {
+      const bundle = {
+        schemaVersion: 1,
+        board: { title: 'IMP-01 Board', description: 'import round trip' },
+        workflow: [
+          { label: 'backlog', accent: '#8891A5', isComplete: false },
+          { label: 'in-progress', accent: '#4FD1C5', isComplete: false },
+          { label: 'done', accent: '#48BB78', isComplete: true }
+        ],
+        lanes: [
+          { label: 'general', accent: '#4FD1C5' },
+          { label: 'urgent', accent: '#F56565' }
+        ],
+        tasks: [
+          { title: 'Task A', repoName: '', repoUrl: '', agent: 'Claude', agentCustom: '', notes: '', tags: ['x'], columnIndex: 0, laneIndex: 0, createdAt: '2026-07-15T20:00:00.000Z', updatedAt: '2026-07-15T20:00:00.000Z' },
+          { title: 'Task B', repoName: '', repoUrl: '', agent: 'Claude', agentCustom: '', notes: '', tags: [], columnIndex: 1, laneIndex: 1, createdAt: '2026-07-15T20:00:00.000Z', updatedAt: '2026-07-15T20:00:00.000Z' }
+        ]
+      };
+      const imp = await postJson('/api/boards/import', bundle);
+      let ok = imp.status === 201 && imp.body && imp.body.ok === true && typeof imp.body.boardId === 'string';
+      let detail = `importStatus=${imp.status}`;
+      if (ok) {
+        const boardId = imp.body.boardId;
+        const wf = await getJson(`/api/boards/${boardId}/workflow`);
+        const lanes = await getJson(`/api/boards/${boardId}/lanes`);
+        const tasks = await getJson(`/api/boards/${boardId}/tasks`);
+        const wfOk = Array.isArray(wf.body) && wf.body.length === 3 &&
+          wf.body.every((s, i) => s.label === bundle.workflow[i].label && s.accent === bundle.workflow[i].accent && s.isComplete === bundle.workflow[i].isComplete);
+        const lanesOk = Array.isArray(lanes.body) && lanes.body.length === 2 &&
+          lanes.body.every((l, i) => l.label === bundle.lanes[i].label && l.accent === bundle.lanes[i].accent);
+        const wfLabelById = {};
+        (wf.body || []).forEach((s) => { wfLabelById[s.id] = s.label; });
+        const laneLabelById = {};
+        (lanes.body || []).forEach((l) => { laneLabelById[l.id] = l.label; });
+        const tasksOk = Array.isArray(tasks.body) && tasks.body.length === 2 &&
+          tasks.body.every((t, i) => {
+            const exp = bundle.tasks[i];
+            return t.title === exp.title &&
+              wfLabelById[t.column] === bundle.workflow[exp.columnIndex].label &&
+              laneLabelById[t.laneId] === bundle.lanes[exp.laneIndex].label;
+          });
+        ok = wfOk && lanesOk && tasksOk;
+        detail = `wfOk=${wfOk}, lanesOk=${lanesOk}, tasksOk=${tasksOk}`;
+      }
+      record('IMP-01: import round-trip preserves lanes/workflow/cards', ok, detail);
+    }
+
+    // IMP-02: import never mutates an existing board (snapshot before/after)
+    {
+      const beforeWf = await getJson('/api/boards/default/workflow');
+      const beforeLanes = await getJson('/api/boards/default/lanes');
+      const beforeTasks = await getJson('/api/boards/default/tasks');
+      const snap = JSON.stringify({ wf: beforeWf.body, lanes: beforeLanes.body, tasks: beforeTasks.body });
+
+      const bundle = {
+        schemaVersion: 1,
+        board: { title: 'IMP-02 Other Board', description: 'should not touch default' },
+        workflow: [
+          { label: 'todo', accent: '#8891A5', isComplete: false },
+          { label: 'done', accent: '#48BB78', isComplete: true }
+        ],
+        lanes: [ { label: 'main', accent: '#4FD1C5' } ],
+        tasks: [
+          { title: 'Other task', repoName: '', repoUrl: '', agent: 'Claude', agentCustom: '', notes: '', tags: [], columnIndex: 0, laneIndex: 0, createdAt: '2026-07-15T20:00:00.000Z', updatedAt: '2026-07-15T20:00:00.000Z' }
+        ]
+      };
+      const imp = await postJson('/api/boards/import', bundle);
+
+      const afterWf = await getJson('/api/boards/default/workflow');
+      const afterLanes = await getJson('/api/boards/default/lanes');
+      const afterTasks = await getJson('/api/boards/default/tasks');
+      const after = JSON.stringify({ wf: afterWf.body, lanes: afterLanes.body, tasks: afterTasks.body });
+
+      const ok = imp.status === 201 && snap === after;
+      record('IMP-02: import does not mutate existing board', ok, `importStatus=${imp.status}, snapshotMatch=${snap === after}`);
+    }
+
+    // IMP-03: malformed import bundles rejected with 400 (three sub-cases)
+    {
+      const validBase = {
+        schemaVersion: 1,
+        board: { title: 'IMP-03 Board', description: 'x' },
+        workflow: [ { label: 'backlog', accent: '#8891A5', isComplete: false } ],
+        lanes: [ { label: 'general', accent: '#4FD1C5' } ],
+        tasks: [ { title: 'T', repoName: '', repoUrl: '', agent: 'Claude', agentCustom: '', notes: '', tags: [], columnIndex: 0, laneIndex: 0, createdAt: '2026-07-15T20:00:00.000Z', updatedAt: '2026-07-15T20:00:00.000Z' } ]
+      };
+      const emptyWf = JSON.parse(JSON.stringify(validBase)); emptyWf.workflow = [];
+      const noTitle = JSON.parse(JSON.stringify(validBase)); noTitle.board = { description: 'x' };
+      const oor = JSON.parse(JSON.stringify(validBase));
+      oor.workflow = [
+        { label: 'a', accent: '#8891A5', isComplete: false },
+        { label: 'b', accent: '#4FD1C5', isComplete: false },
+        { label: 'c', accent: '#48BB78', isComplete: true }
+      ];
+      oor.tasks[0].columnIndex = 99;
+
+      const r1 = await postJson('/api/boards/import', emptyWf);
+      const r2 = await postJson('/api/boards/import', noTitle);
+      const r3 = await postJson('/api/boards/import', oor);
+      const ok = r1.status === 400 && r2.status === 400 && r3.status === 400;
+      record('IMP-03: malformed import rejected with 400', ok, `emptyWf=${r1.status}, noTitle=${r2.status}, oorColumn=${r3.status}`);
+    }
+
+    // IMP-04: non-default workflow/lane order maps by INDEX, not by name
+    {
+      const bundle = {
+        schemaVersion: 1,
+        board: { title: 'IMP-04 Reordered Board', description: 'index mapping' },
+        workflow: [
+          { label: 'done', accent: '#48BB78', isComplete: true },
+          { label: 'backlog', accent: '#8891A5', isComplete: false },
+          { label: 'in-progress', accent: '#4FD1C5', isComplete: false }
+        ],
+        lanes: [
+          { label: 'urgent', accent: '#F56565' },
+          { label: 'general', accent: '#4FD1C5' }
+        ],
+        tasks: [
+          { title: 'A->done/urgent', repoName: '', repoUrl: '', agent: 'Claude', agentCustom: '', notes: '', tags: [], columnIndex: 0, laneIndex: 0, createdAt: '2026-07-15T20:00:00.000Z', updatedAt: '2026-07-15T20:00:00.000Z' },
+          { title: 'B->backlog/general', repoName: '', repoUrl: '', agent: 'Claude', agentCustom: '', notes: '', tags: [], columnIndex: 1, laneIndex: 1, createdAt: '2026-07-15T20:00:00.000Z', updatedAt: '2026-07-15T20:00:00.000Z' }
+        ]
+      };
+      const imp = await postJson('/api/boards/import', bundle);
+      let ok = imp.status === 201;
+      let detail = `importStatus=${imp.status}`;
+      if (ok) {
+        const boardId = imp.body.boardId;
+        const wf = await getJson(`/api/boards/${boardId}/workflow`);
+        const lanes = await getJson(`/api/boards/${boardId}/lanes`);
+        const tasks = await getJson(`/api/boards/${boardId}/tasks`);
+        const wfLabelById = {};
+        (wf.body || []).forEach((s) => { wfLabelById[s.id] = s.label; });
+        const laneLabelById = {};
+        (lanes.body || []).forEach((l) => { laneLabelById[l.id] = l.label; });
+        const tasksOk = Array.isArray(tasks.body) && tasks.body.length === 2 && tasks.body.every((t, i) => {
+          const exp = bundle.tasks[i];
+          return wfLabelById[t.column] === bundle.workflow[exp.columnIndex].label &&
+                 laneLabelById[t.laneId] === bundle.lanes[exp.laneIndex].label;
+        });
+        ok = tasksOk;
+        detail = `tasksOk=${tasksOk}`;
+      }
+      record('IMP-04: non-default order maps by index not name', ok, detail);
+    }
+
+    // IMP-05: two boards may share lane/workflow labels without colliding
+    {
+      const mk = (title) => ({
+        schemaVersion: 1,
+        board: { title, description: 'shared labels' },
+        workflow: [ { label: 'backlog', accent: '#8891A5', isComplete: false } ],
+        lanes: [ { label: 'general', accent: '#4FD1C5' } ],
+        tasks: []
+      });
+      const imp1 = await postJson('/api/boards/import', mk('IMP-05 Board 1'));
+      const imp2 = await postJson('/api/boards/import', mk('IMP-05 Board 2'));
+      let ok = imp1.status === 201 && imp2.status === 201;
+      let detail = `s1=${imp1.status}, s2=${imp2.status}`;
+      if (ok) {
+        const id1 = imp1.body.boardId, id2 = imp2.body.boardId;
+        const wf1 = await getJson(`/api/boards/${id1}/workflow`);
+        const wf2 = await getJson(`/api/boards/${id2}/workflow`);
+        const lanes1 = await getJson(`/api/boards/${id1}/lanes`);
+        const lanes2 = await getJson(`/api/boards/${id2}/lanes`);
+        const lane1 = (lanes1.body || []).find((l) => l.label === 'general');
+        const lane2 = (lanes2.body || []).find((l) => l.label === 'general');
+        const wfState1 = (wf1.body || []).find((s) => s.label === 'backlog');
+        const wfState2 = (wf2.body || []).find((s) => s.label === 'backlog');
+        const eachHasOwn = !!(lane1 && lane2 && wfState1 && wfState2);
+        const laneIdsDiffer = lane1 && lane2 && lane1.id !== lane2.id;
+        const wfIdsDiffer = wfState1 && wfState2 && wfState1.id !== wfState2.id;
+        ok = eachHasOwn && laneIdsDiffer && wfIdsDiffer;
+        detail = `eachHasOwn=${eachHasOwn}, laneIdsDiffer=${laneIdsDiffer}, wfIdsDiffer=${wfIdsDiffer}`;
+      }
+      record('IMP-05: boards may share lane/workflow labels without colliding', ok, detail);
+    }
+
+    // BM-07: rename a board (title + description) via PUT /api/boards/:boardId
+    {
+      const imp = await postJson('/api/boards/import', {
+        schemaVersion: 1,
+        board: { title: 'BM-07 Original', description: 'orig' },
+        workflow: [ { label: 'backlog', accent: '#8891A5', isComplete: false } ],
+        lanes: [ { label: 'general', accent: '#4FD1C5' } ],
+        tasks: []
+      });
+      let ok = imp.status === 201;
+      let detail = `importStatus=${imp.status}`;
+      if (ok) {
+        const boardId = imp.body.boardId;
+        const put = await putJson(`/api/boards/${boardId}`, { title: 'Renamed', description: 'Desc' });
+        const get = await getJson(`/api/boards/${boardId}`);
+        ok = put.status === 200 && get.status === 200 &&
+             get.body.title === 'Renamed' && get.body.description === 'Desc';
+        detail = `putStatus=${put.status}, title=${get.body && get.body.title}, desc=${get.body && get.body.description}`;
+      }
+      record('BM-07: rename board (title + description)', ok, detail);
+    }
+
+    // BM-08: delete a non-active (non-last) board via DELETE /api/boards/:boardId
+    {
+      const imp = await postJson('/api/boards/import', {
+        schemaVersion: 1,
+        board: { title: 'BM-08 To Delete', description: 'delete me' },
+        workflow: [ { label: 'backlog', accent: '#8891A5', isComplete: false } ],
+        lanes: [ { label: 'general', accent: '#4FD1C5' } ],
+        tasks: []
+      });
+      let ok = imp.status === 201;
+      let detail = `importStatus=${imp.status}`;
+      if (ok) {
+        const boardId = imp.body.boardId;
+        const del = await deleteJson(`/api/boards/${boardId}`);
+        const get = await getJson(`/api/boards/${boardId}`);
+        const boards = await getJson('/api/boards');
+        const stillThere = Array.isArray(boards.body) && boards.body.some((b) => b.id === boardId);
+        const defaultStillThere = Array.isArray(boards.body) && boards.body.some((b) => b.id === 'default');
+        ok = del.status === 200 && get.status === 404 && !stillThere && defaultStillThere;
+        detail = `delStatus=${del.status}, getAfter=${get.status}, stillThere=${stillThere}, defaultStillThere=${defaultStillThere}`;
+      }
+      record('BM-08: delete a non-active board', ok, detail);
+    }
+
+    // BM-10: deleting the last remaining board is blocked (expect 400)
+    {
+      // Reduce to exactly one board by deleting all but one.
+      let boards = await getJson('/api/boards');
+      let list = Array.isArray(boards.body) ? boards.body : [];
+      while (list.length > 1) {
+        const victim = list[0];
+        const del = await deleteJson(`/api/boards/${victim.id}`);
+        if (del.status !== 200) break;
+        boards = await getJson('/api/boards');
+        list = Array.isArray(boards.body) ? boards.body : [];
+      }
+      const onlyOne = list.length === 1;
+      let ok = onlyOne;
+      let detail = `boardsRemaining=${list.length}`;
+      if (onlyOne) {
+        const lastId = list[0].id;
+        const del = await deleteJson(`/api/boards/${lastId}`);
+        const get = await getJson(`/api/boards/${lastId}`);
+        const after = await getJson('/api/boards');
+        const stillThere = Array.isArray(after.body) && after.body.some((b) => b.id === lastId);
+        ok = del.status === 400 && get.status === 200 && stillThere;
+        detail = `delStatus=${del.status}, getAfter=${get.status}, stillThere=${stillThere}`;
+      }
+      record('BM-10: delete blocked when only one board remains', ok, detail);
     }
   } catch (err) {
     record('test execution', false, err.message);

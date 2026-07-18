@@ -102,6 +102,37 @@ function validLanes(arr) {
   });
 }
 
+function validHexColor(v) {
+  return typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);
+}
+
+function validImportWorkflow(arr) {
+  return Array.isArray(arr) && arr.length > 0 && arr.every((s) =>
+    s && typeof s === 'object'
+    && typeof s.label === 'string' && s.label.trim().length > 0 && s.label.trim().length <= 40
+    && validHexColor(s.accent)
+    && typeof s.isComplete === 'boolean'
+  );
+}
+
+function validImportLanes(arr) {
+  return Array.isArray(arr) && arr.length > 0 && arr.every((l) =>
+    l && typeof l === 'object'
+    && typeof l.label === 'string' && l.label.trim().length > 0 && l.label.trim().length <= 40
+    && validHexColor(l.accent)
+  );
+}
+
+function validImportTasks(arr, workflowLen, lanesLen) {
+  return Array.isArray(arr) && arr.every((t) =>
+    t && typeof t === 'object'
+    && typeof t.title === 'string' && t.title.trim().length > 0
+    && Number.isInteger(t.columnIndex) && t.columnIndex >= 0 && t.columnIndex < workflowLen
+    && Number.isInteger(t.laneIndex) && t.laneIndex >= 0 && t.laneIndex < lanesLen
+    && (t.tags === undefined || (Array.isArray(t.tags) && t.tags.every((x) => typeof x === 'string')))
+  );
+}
+
 function validBoards(arr) {
   if (!Array.isArray(arr) || arr.length === 0) return false;
   const ids = new Set();
@@ -257,6 +288,77 @@ app.post('/api/boards', async (req, res) => {
   } catch (err) {
     console.error('POST /api/boards failed:', err.message);
     res.status(500).json({ error: 'Failed to write boards' });
+  }
+});
+
+app.post('/api/boards/import', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const boardIn = body.board;
+    const workflowIn = body.workflow;
+    const lanesIn = body.lanes;
+    const tasksIn = Array.isArray(body.tasks) ? body.tasks : [];
+
+    if (!boardIn || typeof boardIn.title !== 'string'
+        || boardIn.title.trim().length === 0 || boardIn.title.trim().length > 200) {
+      return res.status(400).json({ error: 'board.title is required (1-200 chars)' });
+    }
+    if (!validImportWorkflow(workflowIn)) {
+      return res.status(400).json({ error: 'workflow must be a non-empty array of {label, accent, isComplete}' });
+    }
+    if (!validImportLanes(lanesIn)) {
+      return res.status(400).json({ error: 'lanes must be a non-empty array of {label, accent}' });
+    }
+    if (!validImportTasks(tasksIn, workflowIn.length, lanesIn.length)) {
+      return res.status(400).json({ error: 'a task is invalid or has an out-of-range columnIndex/laneIndex' });
+    }
+
+    const boardId = uid();
+    const timestamp = nowIso();
+
+    const board = {
+      id: boardId,
+      title: boardIn.title.trim(),
+      description: typeof boardIn.description === 'string' ? boardIn.description : '',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      isDefault: false
+    };
+
+    const workflow = workflowIn.map((s, i) => ({
+      id: uid(), label: s.label.trim(), accent: s.accent, isComplete: s.isComplete,
+      boardId, sortOrder: i
+    }));
+
+    const lanes = lanesIn.map((l, i) => ({
+      id: uid(), boardId, label: l.label.trim(), accent: l.accent, sortOrder: i
+    }));
+
+    const tasks = tasksIn.map((t) => ({
+      id: uid(),
+      title: t.title.trim(),
+      repoName: typeof t.repoName === 'string' ? t.repoName : '',
+      repoUrl: typeof t.repoUrl === 'string' ? t.repoUrl : '',
+      agent: typeof t.agent === 'string' ? t.agent : '',
+      agentCustom: typeof t.agentCustom === 'string' ? t.agentCustom : '',
+      column: workflow[t.columnIndex].id,
+      laneId: lanes[t.laneIndex].id,
+      boardId,
+      tags: Array.isArray(t.tags) ? t.tags : [],
+      notes: typeof t.notes === 'string' ? t.notes : '',
+      createdAt: typeof t.createdAt === 'string' ? t.createdAt : timestamp,
+      updatedAt: typeof t.updatedAt === 'string' ? t.updatedAt : timestamp
+    }));
+
+    if (!validBoard(board) || !validWorkflow(workflow) || !validLanes(lanes)) {
+      return res.status(500).json({ error: 'internal board construction error' });
+    }
+
+    await db.createBoardBundle({ board, workflow, lanes, tasks });
+    res.status(201).json({ ok: true, boardId });
+  } catch (err) {
+    console.error('POST /api/boards/import failed:', err.message);
+    res.status(500).json({ error: 'Failed to import board' });
   }
 });
 

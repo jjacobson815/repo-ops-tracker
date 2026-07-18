@@ -20,6 +20,7 @@
     <button class="tab-btn" data-tab="library">instructions</button>
   </div>
   <div class="top-actions">
+    <button class="btn ghost" id="manageBoardsBtn">manage boards</button>
     <select id="boardSelector" class="board-selector"></select>
     <span id="statusPill" class="status-pill">saved</span>
   </div>
@@ -103,6 +104,34 @@
     </div>
     <div class="modal-actions" style="justify-content:flex-end;">
       <button class="btn ghost" id="lanesCloseBtn">done</button>
+    </div>
+  </div>
+</div>
+
+<!-- BOARDS MODAL -->
+<div class="modal-overlay" id="boardsModalOverlay">
+  <div class="modal">
+    <h2>manage boards</h2>
+    <p class="modal-help">Each board has its own lanes, workflow, and cards. Export a board to back it up or share it; import a JSON export to recreate it as a new board.</p>
+    <div id="boardsList" class="workflow-state-list"></div>
+    <div id="boardDeletePanel" class="workflow-delete-panel" hidden>
+      <div id="boardDeleteMessage" class="modal-help"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="cancelDeleteBoardBtn">cancel</button>
+        <button class="btn danger" id="confirmDeleteBoardBtn">delete board</button>
+      </div>
+    </div>
+    <div class="workflow-add">
+      <div class="field"><label>new board title</label><input id="newBoardTitle" type="text" maxlength="200" placeholder="e.g. Trace Extractor — Live Validation"></div>
+      <div class="field"><label>description</label><input id="newBoardDescription" type="text" maxlength="500" placeholder="optional"></div>
+      <button class="btn primary" id="addBoardBtn">+ new board</button>
+    </div>
+    <div class="workflow-add">
+      <input type="file" id="importBoardFile" accept="application/json,.json" hidden>
+      <button class="btn ghost" id="importBoardBtn">+ import board from JSON</button>
+    </div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <button class="btn ghost" id="boardsCloseBtn">done</button>
     </div>
   </div>
 </div>

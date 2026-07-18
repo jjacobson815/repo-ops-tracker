@@ -172,3 +172,11 @@ export async function deleteLane(laneId, replacementLaneId) {
     body: JSON.stringify({ laneId, replacementLaneId })
   });
 }
+
+export async function importBoard(bundle) {
+  return fetch('/api/boards/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bundle)
+  });
+}

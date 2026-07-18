@@ -82,6 +82,36 @@ accessed via Prisma; the legacy JSON files are mirrors only.
 - **`DELETE /api/boards/:boardId/lanes/:laneId`** — Deletes a lane. If tasks use that lane, a valid `replacementLaneId` must be supplied (tasks are reassigned). Returns `400` if the lane is missing or would leave zero lanes.
 - **`POST /api/lanes/delete`** — Same as above but operates across all boards/lanes.
 
+### 6. Board Import
+- **`POST /api/boards/import`**
+  - Purpose: Creates a **brand-new** board from a portable JSON bundle. It
+    **never merges or overwrites** an existing board — every import yields a new
+    board with server-generated IDs.
+  - Request body shape:
+    ```json
+    {
+      "schemaVersion": 1,
+      "board": { "title": "Technical Foundation (Pre-Flight)", "description": "Trace Extractor phase 2" },
+      "workflow": [ { "label": "backlog", "accent": "#8891A5", "isComplete": false } ],
+      "lanes": [ { "label": "Environment & Tools", "accent": "#4FD1C5" } ],
+      "tasks": [ { "title": "...", "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "", "notes": "", "tags": ["toolchain"], "columnIndex": 0, "laneIndex": 0, "createdAt": "2026-07-15T20:00:00.000Z", "updatedAt": "2026-07-15T20:00:00.000Z" } ]
+    }
+    ```
+  - Fields:
+    - `schemaVersion` (number) — bundle format version (currently `1`).
+    - `board` — `{ title, description? }`; `title` is required, 1–200 chars.
+    - `workflow` — non-empty array of `{ label, accent (6-digit hex), isComplete? }`.
+    - `lanes` — non-empty array of `{ label, accent (6-digit hex) }`.
+    - `tasks` — optional array; each task's `columnIndex` / `laneIndex` are
+      0-based indices into `workflow` / `lanes` **in the same payload**.
+      `createdAt` / `updatedAt` are optional (default `now`); `tags` is an
+      optional array of strings.
+  - Validation: `workflow` and `lanes` must each be a non-empty array; `board.title`
+    must be 1–200 chars; each task's `columnIndex` / `laneIndex` must be integers
+    in range of `workflow` / `lanes`. Any violation returns `400 { "error": "..." }`
+    and the **entire** import is rejected (no partial writes).
+  - Success: `201 { "ok": true, "boardId": "<id>" }`.
+
 ## Seeding
 On startup, [`server.js`](server.js) calls `ensureSeeded()`, which seeds the
 SQLite database (the source of truth) the first time it is empty — i.e. when no
