@@ -5,58 +5,77 @@ repo clones, agent-generated docs, and build/code-touch work across multiple rep
 
 ## Architecture
 
-A small **Express** backend (`server.js`) serves a single-page frontend built from
-native **ES modules** under `public/` (no bundler, no build step, no framework).
-Two Google Fonts (IBM Plex Mono, Inter) are the only external calls. App data is
-now persisted in SQLite via Prisma, with the database file stored at
-`data/dev.db` and the JSON files left as legacy import sources. See
-[`dev-docs/Index.md`](dev-docs/Index.md) for the full design, API reference, and
-Docker/persistence details.
+A fully **client-side** single-page app built from native **ES modules** under
+`public/` (no bundler, no build step, no framework). Two Google Fonts (IBM Plex
+Mono, Inter) are the only external calls. All data is persisted in the browser
+via **IndexedDB** (through the vendored [Dexie](public/js/vendor/dexie.mjs)
+library) — there is no backend and no network calls for app data. This is
+Phase 1 of an Android/Capacitor port; see [`RECON.md`](RECON.md) and
+[`MIGRATION-NOTES.md`](MIGRATION-NOTES.md) for the migration off the previous
+Express/Prisma/SQLite server (preserved for reference under
+[`legacy-server/`](legacy-server/)).
 
 ## Run it
 
-**Option A — Node (local)**
 ```bash
 npm install
-node server.js
+npm start
 ```
-Then visit `http://localhost:8787`. (`npm install` is required — dependencies
-are `express` and `@prisma/client`, with `prisma` as a dev dependency.)
+Then visit `http://localhost:8787`. `npm start` runs
+[`scripts/serve.mjs`](scripts/serve.mjs), a zero-dependency static file
+server for `public/`. Any static file host works identically — there's no
+server-side logic to run.
 
-**Option B — Docker**
+## Tests
+
 ```bash
-docker compose up --build
+npm test
 ```
-Then visit `http://localhost:8787`.
-
-> Note: the Docker image copies the app source at build time. The compose
-> service only mounts `./data` into the container, not the code directory.
-> That means code changes in this repo require rebuilding the image via
-> `docker compose up --build` before restarting the container.
-
-The host `./data` directory is bind-mounted into the container, so your data survives rebuilds.
+Runs the Playwright acceptance suite ([`test/e2e.spec.mjs`](test/e2e.spec.mjs))
+against the real static app in headless Chromium (real IndexedDB, real ES
+module loading).
 
 ## Data
 
-Everything is now saved to SQLite via Prisma (`data/dev.db`), while the existing
-JSON files under `data/` remain available for migration/import workflows. In
-Docker, the database file lives in the host `./data` directory, so it survives
-rebuilds and can be backed up or inspected directly. The library is seeded with
-three default prompts on first run when the database is empty. A default board,
-workflow, and lane are also seeded at that time.
+Everything is saved to **IndexedDB** in the browser (database name
+`repo-ops-tracker`) — inspect it via DevTools → Application → IndexedDB. The
+library is seeded with three default prompts on first load when the database
+is empty; a default board, workflow, and lane are seeded at that time too.
+Because storage is per-browser-profile, data does not sync across devices or
+browsers in this phase (see MIGRATION-NOTES.md's follow-ups).
 
-To import existing legacy JSON data into SQLite, run `npm run migrate:json`
-(which invokes [`scripts/migrate-json-to-sqlite.js`](scripts/migrate-json-to-sqlite.js)).
+**Import/export** — the Manage Boards view can export any board to a portable
+JSON bundle (workflow, lanes, tasks, and any linked instructions) and import a
+bundle back in as a new board. This is also how you back up or move data
+between browser profiles/devices in the absence of sync.
+
+**Migrating from an old server install** — if you have a legacy
+`data/dev.db` from before this migration, run
+`npm run migrate:export-bundle` (see [`scripts/export-sqlite-to-bundle.mjs`](scripts/export-sqlite-to-bundle.mjs))
+to emit one import bundle per board, then import each through the app's
+manage-boards "import" button.
+
+## AI board generation
+
+Not available in this client-only build. Generating a board draft requires a
+server-side `OPENAI_API_KEY`, and there is no server to hold that secret —
+see [`MIGRATION-NOTES.md`](MIGRATION-NOTES.md) for details. The Manage Boards
+dialog surfaces a clear message when this is attempted; manual board creation
+and JSON import/export are unaffected.
 
 ## Files
-- `server.js` — Express backend + Prisma/SQLite persistence + REST API
-- `lib/db.js` — Prisma database access helpers
-- `prisma/schema.prisma` — SQLite schema definition
-- `scripts/migrate-json-to-sqlite.js` — import legacy JSON data into SQLite
-- `scripts/seed-board-data.js` — backfill default workflow/lanes into legacy JSON for boards lacking them
-- `prisma/migrations/` — applied SQLite migrations (run automatically on boot)
 - `public/` — the frontend (ES modules, CSS, `index.html` skeleton)
-- `data/` — SQLite database (`dev.db`) plus legacy JSON stores
-- `AGENT_HANDOFF.md` — instructions for AI coding agents working on this codebase
-- `dev-docs/` — detailed developer documentation (architecture, API, Docker)
+  - `public/js/db.js` — Dexie (IndexedDB) schema
+  - `public/js/store.js` — data-access layer (CRUD, validation, transactions)
+  - `public/js/app.js` — app state + `ctx` wrappers consumed by components
+  - `public/js/vendor/dexie.mjs` — vendored Dexie library
+- `scripts/serve.mjs` — zero-dependency static file server (`npm start`)
+- `scripts/export-sqlite-to-bundle.mjs` — one-shot legacy SQLite → import
+  bundle migration helper
+- `legacy-server/` — the retired Express/Prisma/SQLite server, kept for
+  reference and for the migration script above (not run by `npm start`)
+- `test/e2e.spec.mjs` / `playwright.config.mjs` — Playwright acceptance suite
+- `RECON.md` — ground-truth model/route inventory for the Dexie migration
+- `MIGRATION-NOTES.md` — migration mapping, deviations, acceptance results
+- `AGENTS.md` — instructions for AI coding agents working on this codebase
 - `README.md` — this file
