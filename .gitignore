@@ -48,3 +48,24 @@ npm-debug.log*
 coverage/
 .nyc_output/
 .obsidian/
+# Added by code-review-graph
+.code-review-graph/
+
+# ---------------------------------------------------------------------------
+# Playwright (test/e2e.spec.mjs — see MIGRATION-NOTES.md)
+# ---------------------------------------------------------------------------
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# One-shot legacy-data migration output (scripts/export-sqlite-to-bundle.mjs)
+data/migration-bundles/
+
+# ---------------------------------------------------------------------------
+# PoB plan sync (scripts/pob-plan/) — persistent Playwright/Chromium profile.
+# This IS the IndexedDB storage the synced board lives in; never commit it.
+# ---------------------------------------------------------------------------
+scripts/pob-plan/.profile/
+scripts/pob-plan/.browsers/
+public/pob-plan-data/

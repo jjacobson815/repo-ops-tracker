@@ -1,0 +1,308 @@
+{
+  "schemaVersion": 2,
+  "board": {
+    "title": "Agentic Coding Training: From Problem Design to Dockerization",
+    "description": "Training workflow derived from new_workflow.md — codebase sourcing, problem creation, verifier creation, and Dockerization. Each task links to a detailed instruction in the library."
+  },
+  "workflow": [
+    { "label": "ToDo", "accent": "#8891A5", "isComplete": false },
+    { "label": "In Progress", "accent": "#4FD1C5", "isComplete": false },
+    { "label": "Review", "accent": "#F5A623", "isComplete": false },
+    { "label": "Complete", "accent": "#4ADE80", "isComplete": true }
+  ],
+  "lanes": [
+    { "label": "general", "accent": "#4FD1C5" }
+  ],
+  "library": [
+    {
+      "title": "Selecting a Training Repo",
+      "category": "Codebase Sourcing",
+      "body": "Pick an open-source repo with a permissive license (MIT, Apache-2.0, or BSD-3-Clause). Choose a language you can read/write well. Prefer codebases with complex interdependencies and existing test suites (e.g. pandas, requests, click, scikit-learn, black, ruff, httpie, Flask, FastAPI, pydantic). Avoid docs-only, hello-world, Terraform/Ansible, thin API wrappers, or data-only repos. Before committing, confirm you can name 2-3 realistic engineering tasks, that behavior is programmatically testable, that the existing test suite passes cleanly, that there are cross-file interdependencies, and that you can build/run it now (not after a weird build step).",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Recording Repo URL & License",
+      "category": "Codebase Sourcing",
+      "body": "Enter the base GitHub repo URL (e.g. https://github.com/pandas-dev/pandas). The license must be MIT, Apache-2.0, or BSD-3-Clause. Functional equivalents that are similarly or more permissive (ISC, BSD-2, CC0, public domain) are acceptable for this training task only; real projects may impose stricter constraints.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Pinning the Commit SHA",
+      "category": "Codebase Sourcing",
+      "body": "Reproducibility requires a fixed commit. Append /commits/ to the repo URL, choose a commit (most recent is fine, or an older one before a feature/bugfix), and copy the full 40-character SHA from the abbreviated SHA's copy button. The Dockerfile clone step will use this SHA to check out the intended version.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Cloning the Repo Locally",
+      "category": "Codebase Sourcing",
+      "body": "Run: git clone <repo-url>; cd <repo-name>; git checkout <commit-sha>; rm -rf .git. Removing .git prevents the coding agent from reading later commit history where the real fix may have landed. On Windows use WSL. Reclone from the URL+SHA for a pristine starting state later.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Writing the Problem Statement",
+      "category": "Problem Creation",
+      "body": "Write a realistic, representative problem the agent must explore, understand, and modify the codebase to solve. Requirements should be programmatically testable and implied by the problem+codebase (no guessing). Aim for a meaningful failure: the agent should miss at least one testable requirement. Make it harder via deeper codebase understanding, larger scope, edge-case handling, and realistic constraints — never via ambiguity or contradiction.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "OpenCode Setup",
+      "category": "Problem Creation",
+      "body": "Install OpenCode (use WSL on Windows; avoid the desktop app). Extract the provided ZIP at the repo root so opencode.json, the hidden .opencode/ folder, and problem.txt all sit directly in the root. Run opencode from the root, then /connect and select the DataAnnotation provider with your account API key. Two models are available: celery (coding agent) and carrot (checker / test-generation). Use /models to switch and /new for a fresh conversation.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Running the Problem Guideline Checker",
+      "category": "Problem Creation",
+      "body": "Set carrot as the model, paste your problem into problem.txt, and prompt 'Run the problem-checker skill'. The checker evaluates the problem against guidelines 1-4 and writes findings to problem_checker_results.md. Iterate until no valid flags remain. Remove problem_checker_results.md before switching to the coding agent so it relies only on problem.txt and the codebase.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Eliciting a Failure with the Coding Agent",
+      "category": "Problem Creation",
+      "body": "Set celery, confirm problem.txt is the latest version, and prompt 'Solve the problem in problem.txt'. Review the agent's edits against every requirement (including implied edge cases). If it fully satisfies all requirements, revise the problem to be harder and rerun from a FRESH repo copy at the chosen SHA. A valid failure is at least one unsatisfied requirement; if none after several attempts, you may proceed without one.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Creating a Clean Repo Copy for Verifiers",
+      "category": "Verifier Creation",
+      "body": "Clone a fresh copy at the SHA, rm -rf .git, extract the ZIP, and paste problem.txt in. Running the test-generation agent in a clean copy (without the coding agent's edits) lowers the risk of overspecified tests that over-index on the agent's solution.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Running the Test Generation Agent",
+      "category": "Verifier Creation",
+      "body": "In the clean copy, set carrot and prompt 'Run the test-generation skill'. This creates a da_training_project_tests/ directory with the generated suite. Ensure .opencode/skills/test-generation/SKILL.md exists; if you don't see 'Skill: test-generation' after submitting, the agent wasn't triggered.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Checking Test/Problem Alignment",
+      "category": "Verifier Creation",
+      "body": "Tests must be neither overspecified (imposing requirements not stated/implied by the problem) nor underspecified (missing stated/implied requirements). Review generated tests against the problem; copy them into the coding agent's directory to help spot misalignment. Fix and rerun until aligned.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Running Tests on the Agent's Solution",
+      "category": "Verifier Creation",
+      "body": "Copy da_training_project_tests/ into the coding agent's directory and run the tests. If you elicited a failure, at least one test should fail and correspond to the described failure; if not, all should pass. Rerun/upload a screenshot once results match expectations.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Docker Survival Guide",
+      "category": "Dockerization",
+      "body": "Work through the interactive Docker Survival Guide (12 challenges, ~20-30 min) covering dependency pinning, startup scripts, debugging inside containers, and common pitfalls seen in real agentic coding projects. Save it as a reference for real tasks.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Containerize the Application (Workshop Part 1)",
+      "category": "Dockerization",
+      "body": "Complete Docker Workshop Part 1: Containerize an Application. You should end with a directory containing the getting-started-app repo and a Dockerfile. Build and run the container to verify it works.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Dockerfile: Clone the Repo (Part 2)",
+      "category": "Dockerization",
+      "body": "Delete all files except the Dockerfile. Edit the Dockerfile to clone the workshop repo (https://github.com/docker/getting-started-app) using a RUN step that installs git and clones. Remember to build and run the container to confirm it works.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Dockerfile: Add Files (Part 3)",
+      "category": "Dockerization",
+      "body": "Extract the provided ZIP (opencode/, opencode.json, problem.txt) into your working directory. Modify the Dockerfile so that all files except the Dockerfile itself are copied into the container at build time.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Pin Dependencies with npm ci (Part 4)",
+      "category": "Dockerization",
+      "body": "The getting-started-app is Node.js. Change RUN npm install to RUN npm ci so the exact versions in package-lock.json are installed (the git clone step refetches package-lock.json, so it is present). Rebuild and verify the app still runs. Pinning prevents version drift and 'works on my machine' failures.",
+      "type": "instruction",
+      "lang": null
+    },
+    {
+      "title": "Upload the Docker Container ZIP",
+      "category": "Dockerization",
+      "body": "Upload a ZIP of the working directory (Dockerfile + files needed to build it). Press 'Extract Dockerfile' then 'Check Dockerfile' to have an AI verify it. Note any issues in the comment; this does not block submission.",
+      "type": "instruction",
+      "lang": null
+    }
+  ],
+  "tasks": [
+    {
+      "title": "Select training repository",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "Pick a permissive-licensed repo with testable behavior and interdependencies.",
+      "tags": ["part-1", "sourcing"],
+      "columnIndex": 3, "laneIndex": 0,
+      "libraryIndexes": [0],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Record repo URL & license",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "Base GitHub URL + confirm MIT/Apache-2.0/BSD-3 (or similarly permissive).",
+      "tags": ["part-1", "sourcing"],
+      "columnIndex": 3, "laneIndex": 0,
+      "libraryIndexes": [1],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Pin commit SHA for reproducibility",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "Copy full 40-char SHA from the commits page.",
+      "tags": ["part-1", "sourcing"],
+      "columnIndex": 2, "laneIndex": 0,
+      "libraryIndexes": [2],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Clone repo locally (rm .git)",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "git clone; checkout SHA; rm -rf .git. Use WSL on Windows.",
+      "tags": ["part-1", "sourcing"],
+      "columnIndex": 1, "laneIndex": 0,
+      "libraryIndexes": [3],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Draft problem statement",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "Realistic, testable, aims for a meaningful failure.",
+      "tags": ["part-2", "problem"],
+      "columnIndex": 1, "laneIndex": 0,
+      "libraryIndexes": [4],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Set up OpenCode (celery + carrot)",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "Extract ZIP at root; /connect DataAnnotation; two models available.",
+      "tags": ["part-2", "setup"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [5],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Run problem guideline checker",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "carrot + 'Run the problem-checker skill'; iterate to no valid flags.",
+      "tags": ["part-2", "checker"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [6],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Elicit failure with coding agent",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "celery + 'Solve the problem in problem.txt'; revise problem if fully solved.",
+      "tags": ["part-2", "agent"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [7],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Create clean repo copy for verifiers",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "Fresh clone at SHA; extract ZIP; paste problem.txt.",
+      "tags": ["part-3", "verifier"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [8],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Generate test suite (carrot)",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "carrot + 'Run the test-generation skill'; produces da_training_project_tests/.",
+      "tags": ["part-3", "verifier"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [9],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Check test/problem alignment",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "Avoid overspecified/underspecified tests; fix and rerun.",
+      "tags": ["part-3", "verifier"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [10],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Run tests on agent's solution",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "Copy tests in; confirm failure corresponds to described failure (or all pass).",
+      "tags": ["part-3", "verifier"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [11],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Work through Docker Survival Guide",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "12 challenges, ~20-30 min; save as reference.",
+      "tags": ["part-4", "docker"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [12],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Containerize app (Workshop Part 1)",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "getting-started-app + Dockerfile; build/run to verify.",
+      "tags": ["part-4", "docker"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [13],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Dockerfile: clone the repo (Part 2)",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "Delete all but Dockerfile; clone getting-started-app via RUN git install+clone.",
+      "tags": ["part-4", "docker"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [14],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Dockerfile: add files (Part 3)",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "Extract ZIP; COPY all files except Dockerfile into container.",
+      "tags": ["part-4", "docker"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [15],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Pin deps with npm ci (Part 4)",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "Change npm install -> npm ci for reproducible installs.",
+      "tags": ["part-4", "docker"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [16],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "title": "Upload Docker container ZIP",
+      "repoName": "", "repoUrl": "", "agent": "Claude", "agentCustom": "",
+      "notes": "ZIP working dir; Extract Dockerfile -> Check Dockerfile.",
+      "tags": ["part-4", "docker"],
+      "columnIndex": 0, "laneIndex": 0,
+      "libraryIndexes": [17],
+      "createdAt": "2026-07-20T00:00:00.000Z", "updatedAt": "2026-07-20T00:00:00.000Z"
+    }
+  ]
+}
