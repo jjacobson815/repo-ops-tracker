@@ -1,19 +1,22 @@
 {
   "name": "repo-ops-tracker",
   "version": "1.0.0",
-  "description": "Personal kanban board + AI-agent instruction library",
-  "main": "server.js",
+  "description": "Personal kanban board + AI-agent instruction library (client-side / IndexedDB)",
+  "main": "scripts/serve.mjs",
   "type": "commonjs",
   "scripts": {
-    "start": "node server.js",
-    "migrate:json": "node scripts/migrate-json-to-sqlite.js",
-    "test": "node test/api.test.js"
+    "start": "node scripts/serve.mjs",
+    "serve": "node scripts/serve.mjs",
+    "test": "playwright test",
+    "test:e2e": "playwright test",
+    "migrate:export-bundle": "node scripts/export-sqlite-to-bundle.mjs",
+    "pob:sync": "node scripts/pob-plan/sync.mjs",
+    "pob:view": "node scripts/pob-plan/view.mjs"
   },
-  "dependencies": {
-    "@prisma/client": "^5.22.0",
-    "express": "^4.19.2"
-  },
+  "dependencies": {},
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@prisma/client": "^5.22.0",
     "prisma": "^5.22.0"
   }
 }

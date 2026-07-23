@@ -63,6 +63,12 @@
 //       ctx.renderAll(), closeLibModal.
 //   copyLibBody(id, ctx)
 //       navigator.clipboard.writeText(body) then ctx.showToast('copied...').
+//   openLibViewModal(id, ctx)
+//       Opens #libViewModalOverlay (read-only markdown popover) for
+//       state.library[id]; sets state.currentLibViewId. Renders body via
+//       marked + DOMPurify (XSS-safe).
+//   closeLibViewModal()
+//       Hides #libViewModalOverlay and clears state.currentLibViewId.
 //
 // ./components/modal.js
 //   askConfirm(message, onConfirm)
@@ -93,29 +99,29 @@
 //   - Components therefore NEVER import from app.js, avoiding a cycle.
 // ----------------------------------------------------------------------------
 
+// Persistence now runs entirely client-side against IndexedDB via store.js
+// (Dexie). The old fetch layer (api.js) is deleted; the ctx contract these
+// wrappers expose to components is unchanged (see store.js / RECON.md). The
+// aliases below keep the wrapper bodies readable against the former API names.
 import {
-  getBoards,
-  getBoard,
-  saveBoards,
+  ensureSeeded,
+  getAllBoards as getBoards,
+  getBoardById as getBoard,
   updateBoard,
   deleteBoard,
-  getTasks,
-  saveTasks as apiSaveTasks,
-  getBoardTasks,
-  saveBoardTasks,
-  getLibrary,
-  saveLibrary as apiSaveLibrary,
-  getWorkflow,
-  saveWorkflow as apiSaveWorkflow,
-  deleteWorkflowState as apiDeleteWorkflowState,
-  getLanes,
-  getBoardLanes,
-  saveLanes as apiSaveLanes,
-  getBoardWorkflow,
-  saveBoardWorkflow,
+  getAllTasks as getTasks,
+  getTasksByBoard as getBoardTasks,
+  saveTasksForBoard as saveBoardTasks,
+  getAllLibraryEntries as getLibrary,
+  saveAllLibraryEntries as apiSaveLibrary,
+  getLanesByBoard as getBoardLanes,
+  saveLanesForBoard as saveBoardLanes,
+  deleteBoardLane,
+  getWorkflowByBoard as getBoardWorkflow,
+  saveWorkflowForBoard as saveBoardWorkflow,
   deleteBoardWorkflowState,
   importBoard as apiImportBoard
-} from './api.js';
+} from './store.js';
 import { renderDashboard } from './components/dashboard.js';
 import {
   renderBoard,
@@ -135,7 +141,8 @@ import {
 import { askConfirm, closeConfirm, showToast, flashStatus } from './components/modal.js';
 import { initWorkflow } from './components/workflow.js';
 import { initLanes } from './components/lanes.js';
-import { initBoards } from './components/boards.js';
+import { initBoards, openBoardsView } from './components/boards.js';
+import { syncPobPlanNow, startPobPlanAutoPoll, isPobPlanAutoPollEnabled, markPobPlanAutoPollEnabled } from './pob-plan-watch.js';
 
 // Local HTML-escaping helper (this project duplicates this per-file rather
 // than sharing a single util module). Used to safely interpolate untrusted
@@ -172,7 +179,15 @@ export const state = {
   lanes: LANES,
   currentTaskId: null,
   currentLibId: null,
+  currentLibViewId: null,
 };
+
+let previouslyActiveTab = null;
+
+function returnFromManageBoards() {
+  const target = previouslyActiveTab || 'dashboard';
+  document.querySelector(`.tab-btn[data-tab="${target}"]`)?.click();
+}
 
 // Context object handed to component render/controller functions. Keeps the
 // app-level actions (persistence + re-render) available without components
@@ -188,8 +203,8 @@ const ctx = {
   saveLanes,
   deleteLane,
   renderAll,
-  getAllTasksAcrossBoards, fetchBoardBundleSource, importBoardBundle,
-  renameBoard, removeBoard, reloadBoards,
+  getAllTasksAcrossBoards, fetchBoardBundleSource, importBoardBundle, generateBoardDraft,
+  renameBoard, removeBoard, reloadBoards, returnFromManageBoards,
 };
 
 // ---- persistence wrappers -------------------------------------------------
@@ -199,8 +214,7 @@ const ctx = {
 export async function saveTasks() {
   try {
     if (!state.currentBoardId) throw new Error('no current board');
-    const res = await saveBoardTasks(state.currentBoardId, state.tasks);
-    if (!res.ok) throw new Error('tasks save failed');
+    await saveBoardTasks(state.currentBoardId, state.tasks);
     flashStatus('saved');
   } catch (e) {
     flashStatus('save failed');
@@ -209,8 +223,7 @@ export async function saveTasks() {
 
 export async function saveLibrary() {
   try {
-    const res = await apiSaveLibrary(state.library);
-    if (!res.ok) throw new Error('library save failed');
+    await apiSaveLibrary(state.library);
     flashStatus('saved');
   } catch (e) {
     flashStatus('save failed');
@@ -220,56 +233,44 @@ export async function saveLibrary() {
 export async function saveWorkflow(workflow) {
   try {
     if (!state.currentBoardId) throw new Error('no current board');
-    const res = await saveBoardWorkflow(state.currentBoardId, workflow);
-    const body = await res.json();
-    if (!res.ok) return { ok: false, error: body.error };
+    await saveBoardWorkflow(state.currentBoardId, workflow);
     flashStatus('saved');
     return { ok: true };
   } catch (e) {
-    flashStatus('save failed');
-    return { ok: false, error: 'could not save workflow' };
+    return { ok: false, error: e.message || 'could not save workflow' };
   }
 }
 
 export async function deleteWorkflowState(stateId, replacementStateId) {
   try {
     if (!state.currentBoardId) throw new Error('no current board');
-    const res = await deleteBoardWorkflowState(state.currentBoardId, stateId, replacementStateId);
-    const body = await res.json();
-    if (!res.ok) return { ok: false, error: body.error };
+    const { workflow } = await deleteBoardWorkflowState(state.currentBoardId, stateId, replacementStateId);
     flashStatus('saved');
-    return { ok: true, workflow: body.workflow };
+    return { ok: true, workflow };
   } catch (e) {
-    flashStatus('save failed');
-    return { ok: false, error: 'could not delete workflow state' };
+    return { ok: false, error: e.message || 'could not delete workflow state' };
   }
 }
 
 export async function saveLanes(lanes) {
   try {
     if (!state.currentBoardId) throw new Error('no current board');
-    const res = await saveBoardLanes(state.currentBoardId, lanes);
-    const body = await res.json();
-    if (!res.ok) return { ok: false, error: body.error };
+    await saveBoardLanes(state.currentBoardId, lanes);
     flashStatus('saved');
     return { ok: true };
   } catch (e) {
-    flashStatus('save failed');
-    return { ok: false, error: 'could not save lanes' };
+    return { ok: false, error: e.message || 'could not save lanes' };
   }
 }
 
 export async function deleteLane(laneId, replacementLaneId) {
   try {
     if (!state.currentBoardId) throw new Error('no current board');
-    const res = await deleteBoardLane(state.currentBoardId, laneId, replacementLaneId);
-    const body = await res.json();
-    if (!res.ok) return { ok: false, error: body.error };
+    const { lanes } = await deleteBoardLane(state.currentBoardId, laneId, replacementLaneId);
     flashStatus('saved');
-    return { ok: true, lanes: body.lanes };
+    return { ok: true, lanes };
   } catch (e) {
-    flashStatus('save failed');
-    return { ok: false, error: 'could not delete lane' };
+    return { ok: false, error: e.message || 'could not delete lane' };
   }
 }
 
@@ -283,50 +284,63 @@ export async function getAllTasksAcrossBoards() {
 }
 
 export async function fetchBoardBundleSource(boardId) {
-  const [board, tasks, workflow, lanes] = await Promise.all([
+  const [board, tasks, workflow, lanes, library] = await Promise.all([
     getBoard(boardId),
     getBoardTasks(boardId),
     getBoardWorkflow(boardId),
-    getBoardLanes(boardId)
+    getBoardLanes(boardId),
+    getLibrary()
   ]);
   return {
     board,
     tasks: Array.isArray(tasks) ? tasks : [],
     workflow: Array.isArray(workflow) ? workflow : [],
-    lanes: Array.isArray(lanes) ? lanes : []
+    lanes: Array.isArray(lanes) ? lanes : [],
+    library: Array.isArray(library) ? library : []
   };
 }
 
 export async function importBoardBundle(bundle) {
   try {
-    const res = await apiImportBoard(bundle);
-    const body = await res.json();
-    if (!res.ok) return { ok: false, error: body.error };
-    return { ok: true, boardId: body.boardId };
+    const { boardId } = await apiImportBoard(bundle);
+    // The library is global (not board-scoped). An import may create new
+    // instructions, so refresh state.library from the store. reloadBoards()
+    // (called by the caller) triggers switchBoard() -> renderAll(), which will
+    // then surface the imported instructions in the library view.
+    try {
+      const lib = await getLibrary();
+      if (Array.isArray(lib)) state.library = lib;
+    } catch (_) { /* keep prior library on read failure */ }
+    return { ok: true, boardId };
   } catch (e) {
-    return { ok: false, error: 'could not import board' };
+    // store.importBoard throws the same rejection messages the API returned.
+    return { ok: false, error: e.message || 'could not import board' };
   }
+}
+
+// AI board generation requires a server-side secret (OPENAI_API_KEY) and cannot
+// run in the offline/on-device build — see RECON.md §c-3. Signature preserved;
+// returns a clean unsupported-result the manage-boards UI already surfaces.
+export async function generateBoardDraft(brief) {
+  void brief;
+  return { ok: false, error: 'AI board generation requires a server and is unavailable in offline mode' };
 }
 
 export async function renameBoard(boardId, patch) {
   try {
-    const res = await updateBoard(boardId, patch);
-    const body = await res.json();
-    if (!res.ok) return { ok: false, error: body.error };
-    return { ok: true, board: body.board };
+    const board = await updateBoard(boardId, patch);
+    return { ok: true, board };
   } catch (e) {
-    return { ok: false, error: 'could not rename board' };
+    return { ok: false, error: e.message || 'could not rename board' };
   }
 }
 
 export async function removeBoard(boardId) {
   try {
-    const res = await deleteBoard(boardId);
-    const body = await res.json();
-    if (!res.ok) return { ok: false, error: body.error };
-    return { ok: true, boards: body.boards };
+    const boards = await deleteBoard(boardId);
+    return { ok: true, boards };
   } catch (e) {
-    return { ok: false, error: 'could not delete board' };
+    return { ok: false, error: e.message || 'could not delete board' };
   }
 }
 
@@ -349,9 +363,13 @@ export async function reloadBoards(selectBoardId) {
 
 export async function initApp() {
   try {
+    // First run: populate the default board / workflow / lanes / prompts
+    // (replaces the old server-boot seeding).
+    await ensureSeeded();
     state.boards = await getBoards();
     state.currentBoardId = state.boards.find(b => b.isDefault)?.id || state.boards[0]?.id || null;
-    state.library = Array.isArray(await getLibrary()) ? await getLibrary() : [];
+    const initialLibrary = await getLibrary();
+    state.library = Array.isArray(initialLibrary) ? initialLibrary : [];
 
     refreshBoardSelector();
 
@@ -404,12 +422,17 @@ export function renderAll() {
 function wireTabs() {
   const tabBtns = document.querySelectorAll('.tab-btn');
   tabBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
+      const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+      if (btn.dataset.tab === 'manage-boards' && activeTab && activeTab !== 'manage-boards') {
+        previouslyActiveTab = activeTab;
+      }
       tabBtns.forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
       btn.classList.add('active');
       const view = document.getElementById('view-' + btn.dataset.tab);
       if (view) view.classList.add('active');
+      if (btn.dataset.tab === 'manage-boards') await openBoardsView(ctx);
     });
   });
 }
@@ -463,16 +486,77 @@ export async function switchBoard(boardId) {
   }
 }
 
+// ---- PoB plan sync ----------------------------------------------------
+
+// Re-reads the CURRENT board's tasks/workflow/lanes and re-renders. Unlike
+// switchBoard(), this works even when the target board id already equals
+// state.currentBoardId — needed after a pob-plan-watch sync writes new
+// content into whichever board you happen to be looking at.
+async function refreshCurrentBoardData() {
+  if (!state.currentBoardId) return;
+  try {
+    const [tasks, workflow, lanes] = await Promise.all([
+      getBoardTasks(state.currentBoardId),
+      getBoardWorkflow(state.currentBoardId),
+      getBoardLanes(state.currentBoardId)
+    ]);
+    state.tasks = Array.isArray(tasks) ? tasks : [];
+    COLUMNS.splice(0, COLUMNS.length, ...(Array.isArray(workflow) ? workflow : []));
+    LANES.splice(0, LANES.length, ...(Array.isArray(lanes) ? lanes : []));
+    renderAll();
+  } catch (_) { /* non-fatal */ }
+}
+
+async function onPobPlanApplied() {
+  await reloadBoards();
+  await refreshCurrentBoardData();
+}
+
+function wirePobPlanSync() {
+  const btn = document.getElementById('pobPlanSyncBtn');
+  const status = document.getElementById('pobPlanSyncStatus');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    if (status) status.textContent = 'syncing…';
+    try {
+      const result = await syncPobPlanNow({ force: true });
+      if (!result.ok) {
+        if (status) status.textContent = result.reason || 'sync failed';
+      } else {
+        await onPobPlanApplied();
+        if (status) status.textContent = `synced ${result.boardCount} boards, ${result.taskCount} cards (generated ${new Date(result.generatedAt).toLocaleString()})`;
+        showToast('PoB plan synced');
+        // First successful manual sync opts this browser into background
+        // auto-refresh going forward — see isPobPlanAutoPollEnabled() for why
+        // this isn't on by default.
+        if (!isPobPlanAutoPollEnabled()) {
+          markPobPlanAutoPollEnabled();
+          startPobPlanAutoPoll(onPobPlanApplied);
+        }
+      }
+    } catch (e) {
+      if (status) status.textContent = 'sync failed';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 // ---- boot -----------------------------------------------------------------
 
 function boot() {
   wireTabs();
   wireFilters();
   wireBoardSelector();
+  wirePobPlanSync();
   initWorkflow(ctx);
   initLanes(ctx);
   initBoards(ctx);
   initApp();
+  if (isPobPlanAutoPollEnabled()) {
+    startPobPlanAutoPoll(onPobPlanApplied);
+  }
 }
 
 if (document.readyState === 'loading') {

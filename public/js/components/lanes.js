@@ -2,7 +2,7 @@
 // Native ES module. Imports only from ./modal.js (no cycle with app.js).
 // Receives ctx for app-level actions: { state, LANES, saveLanes, deleteLane, renderAll }.
 
-import { askConfirm, showToast } from './modal.js';
+import { askConfirm, showToast, openModal, closeModal } from './modal.js';
 
 function getEl(id) { return document.getElementById(id); }
 
@@ -191,10 +191,10 @@ export function openLanesModal(ctx) {
   ctxRef = ctx;
   hideDeletePanel();
   renderLaneList();
-  getEl('lanesModalOverlay')?.classList.add('show');
+  openModal('lanesModalOverlay');
 }
 
 export function closeLanesModal() {
   hideDeletePanel();
-  getEl('lanesModalOverlay')?.classList.remove('show');
+  closeModal('lanesModalOverlay');
 }

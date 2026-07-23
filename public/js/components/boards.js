@@ -1,7 +1,7 @@
-// boards.js — manage-boards modal: create, rename, delete, duplicate, export, import.
+// boards.js — manage-boards view: create, rename, delete, duplicate, export, import.
 // Native ES module. Imports only from ./modal.js (no cycle with app.js).
 // Receives ctx: { state, getAllTasksAcrossBoards, fetchBoardBundleSource,
-// importBoardBundle, renameBoard, removeBoard, reloadBoards }.
+// importBoardBundle, generateBoardDraft, renameBoard, removeBoard, reloadBoards }.
 
 import { askConfirm, showToast } from './modal.js';
 
@@ -28,25 +28,51 @@ let taskCountsByBoard = {};
 
 // ---------- portable bundle conversion ----------
 
-function toPortableBundle({ board, workflow, lanes, tasks }) {
+function toPortableBundle({ board, workflow, lanes, tasks, library }) {
   const sortedWorkflow = [...workflow].sort((a, b) => a.sortOrder - b.sortOrder);
   const sortedLanes = [...lanes].sort((a, b) => a.sortOrder - b.sortOrder);
   const workflowIndex = new Map(sortedWorkflow.map((w, i) => [w.id, i]));
   const laneIndex = new Map(sortedLanes.map((l, i) => [l.id, i]));
+
+  const usedEntryIds = [];
+  const seen = new Set();
+  tasks.forEach((t) => {
+    (library || []).forEach((entry) => {
+      if ((entry.taskIds || []).includes(t.id) && !seen.has(entry.id)) {
+        seen.add(entry.id);
+        usedEntryIds.push(entry.id);
+      }
+    });
+  });
+  const libraryIndexByEntryId = new Map(usedEntryIds.map((id, i) => [id, i]));
+  const entryById = new Map((library || []).map((e) => [e.id, e]));
+
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     board: { title: board?.title || 'Untitled board', description: board?.description || '' },
     workflow: sortedWorkflow.map((w) => ({ label: w.label, accent: w.accent, isComplete: !!w.isComplete })),
     lanes: sortedLanes.map((l) => ({ label: l.label, accent: l.accent })),
+    library: usedEntryIds.map((id) => {
+      const e = entryById.get(id);
+      return { title: e.title, category: e.category, body: e.body, type: e.type || 'instruction', lang: e.lang || null };
+    }),
     tasks: tasks
       .filter((t) => workflowIndex.has(t.column) && laneIndex.has(t.laneId))
-      .map((t) => ({
-        title: t.title, repoName: t.repoName || '', repoUrl: t.repoUrl || '',
-        agent: t.agent || '', agentCustom: t.agentCustom || '', notes: t.notes || '',
-        tags: Array.isArray(t.tags) ? t.tags : [],
-        columnIndex: workflowIndex.get(t.column), laneIndex: laneIndex.get(t.laneId),
-        createdAt: t.createdAt, updatedAt: t.updatedAt
-      }))
+      .map((t) => {
+        const linkedEntries = (library || []).filter((entry) => (entry.taskIds || []).includes(t.id));
+        return {
+          title: t.title, repoName: t.repoName || '', repoUrl: t.repoUrl || '',
+          agent: t.agent || '', agentCustom: t.agentCustom || '', notes: t.notes || '',
+          tags: Array.isArray(t.tags) ? t.tags : [],
+          columnIndex: workflowIndex.get(t.column), laneIndex: laneIndex.get(t.laneId),
+          libraryIndexes: linkedEntries.map((entry) => libraryIndexByEntryId.get(entry.id)),
+          linkedInstructions: linkedEntries.map((entry) => ({
+            title: entry.title, category: entry.category, body: entry.body,
+            type: entry.type || 'instruction', lang: entry.lang || null
+          })),
+          createdAt: t.createdAt, updatedAt: t.updatedAt
+        };
+      })
   };
 }
 
@@ -106,7 +132,7 @@ async function importFromFile(file) {
 
 function blankTemplate(title, description) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     board: { title, description },
     workflow: [
       { label: 'backlog', accent: '#8891A5', isComplete: false },
@@ -114,6 +140,7 @@ function blankTemplate(title, description) {
       { label: 'done', accent: '#4ADE80', isComplete: true }
     ],
     lanes: [{ label: 'general', accent: '#4FD1C5' }],
+    library: [],
     tasks: []
   };
 }
@@ -129,6 +156,62 @@ async function createBlankBoard() {
   getEl('newBoardTitle').value = '';
   getEl('newBoardDescription').value = '';
   showToast('board created');
+}
+
+function setAiStatus(message) {
+  const status = getEl('aiBoardStatus');
+  if (status) status.textContent = message || '';
+}
+
+function hideAiPreview() {
+  const preview = getEl('aiBoardPreview');
+  if (preview) preview.hidden = true;
+  const draft = getEl('aiBoardDraft');
+  if (draft) draft.value = '';
+  setAiStatus('');
+}
+
+function aiBrief() {
+  return {
+    goal: getEl('aiBoardGoal')?.value.trim() || '',
+    description: getEl('aiBoardDescription')?.value.trim() || '',
+    workflowHint: getEl('aiBoardWorkflowHint')?.value.trim() || '',
+    lanesHint: getEl('aiBoardLanesHint')?.value.trim() || '',
+    taskCount: Number(getEl('aiBoardTaskCount')?.value || 6),
+    constraints: getEl('aiBoardConstraints')?.value.trim() || ''
+  };
+}
+
+async function generateAiBoard() {
+  const goal = getEl('aiBoardGoal')?.value.trim();
+  if (!goal) { showToast('board goal required'); return; }
+  const button = getEl('generateBoardBtn');
+  if (button) button.disabled = true;
+  setAiStatus('generating draft…');
+  const result = await ctxRef.generateBoardDraft(aiBrief());
+  if (button) button.disabled = false;
+  if (!result.ok) { setAiStatus(''); showToast(result.error || 'generation failed'); return; }
+  const draft = getEl('aiBoardDraft');
+  if (draft) draft.value = JSON.stringify(result.bundle, null, 2);
+  const preview = getEl('aiBoardPreview');
+  if (preview) preview.hidden = false;
+  setAiStatus('draft ready — review before creating');
+}
+
+async function createAiBoard() {
+  const raw = getEl('aiBoardDraft')?.value || '';
+  let bundle;
+  try { bundle = JSON.parse(raw); }
+  catch (_) { showToast('draft is not valid JSON'); return; }
+  const button = getEl('createAiBoardBtn');
+  if (button) button.disabled = true;
+  const result = await ctxRef.importBoardBundle(bundle);
+  if (button) button.disabled = false;
+  if (!result.ok) { showToast(result.error || 'could not create board'); return; }
+  await ctxRef.reloadBoards(result.boardId);
+  await refreshBoardsList();
+  hideAiPreview();
+  showToast('board created from AI draft');
 }
 
 async function saveOneBoard(boardId) {
@@ -223,8 +306,7 @@ async function refreshBoardsList() {
 // ---------- wiring ----------
 
 function wireStatic() {
-  getEl('manageBoardsBtn')?.addEventListener('click', () => openBoardsModal(ctxRef));
-  getEl('boardsCloseBtn')?.addEventListener('click', closeBoardsModal);
+  getEl('boardsCloseBtn')?.addEventListener('click', () => ctxRef?.returnFromManageBoards());
   getEl('addBoardBtn')?.addEventListener('click', createBlankBoard);
   getEl('importBoardBtn')?.addEventListener('click', () => getEl('importBoardFile')?.click());
   getEl('importBoardFile')?.addEventListener('change', (e) => {
@@ -232,6 +314,9 @@ function wireStatic() {
     importFromFile(file);
     e.target.value = '';
   });
+  getEl('generateBoardBtn')?.addEventListener('click', generateAiBoard);
+  getEl('createAiBoardBtn')?.addEventListener('click', createAiBoard);
+  getEl('cancelAiBoardBtn')?.addEventListener('click', hideAiPreview);
   getEl('cancelDeleteBoardBtn')?.addEventListener('click', hideDeleteBoardPanel);
   getEl('confirmDeleteBoardBtn')?.addEventListener('click', confirmDeleteBoard);
 }
@@ -241,14 +326,9 @@ export function initBoards(ctx) {
   if (!staticWired) { wireStatic(); staticWired = true; }
 }
 
-export async function openBoardsModal(ctx) {
+export async function openBoardsView(ctx) {
   ctxRef = ctx;
   hideDeleteBoardPanel();
+  hideAiPreview();
   await refreshBoardsList();
-  getEl('boardsModalOverlay')?.classList.add('show');
-}
-
-export function closeBoardsModal() {
-  hideDeleteBoardPanel();
-  getEl('boardsModalOverlay')?.classList.remove('show');
 }

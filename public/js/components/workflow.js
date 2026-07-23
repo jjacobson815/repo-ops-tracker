@@ -1,4 +1,4 @@
-import { askConfirm, showToast } from './modal.js';
+import { askConfirm, showToast, openModal, closeModal } from './modal.js';
 
 function getEl(id) { return document.getElementById(id); }
 function escapeHtml(value) {
@@ -179,10 +179,10 @@ export function openWorkflowModal(ctx) {
   ctxRef = ctx;
   hideDeletePanel();
   renderStateList();
-  getEl('workflowModalOverlay')?.classList.add('show');
+  openModal('workflowModalOverlay');
 }
 
 export function closeWorkflowModal() {
   hideDeletePanel();
-  getEl('workflowModalOverlay')?.classList.remove('show');
+  closeModal('workflowModalOverlay');
 }

@@ -1,9 +1,31 @@
 // modal.js — shared confirm dialog, toast, status pill (Phase C2)
 // Imports nothing from app.js or the other components (no circular deps).
-// Also owns the click-outside-to-close behavior for all three overlays and
+// Also owns the click-outside-to-close behavior for all overlays and
 // wires the confirm dialog buttons, replacing the old inline onclick handlers.
 
 function getEl(id){ return document.getElementById(id); }
+
+const MODAL_ANIMATION_MS = 150; // keep in sync with the animation durations in components.css §4
+const prefersReducedMotion = () =>
+  typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+export function openModal(overlayId) {
+  const ov = getEl(overlayId);
+  if (!ov) return;
+  ov.classList.remove('closing');
+  ov.classList.add('show');
+}
+
+export function closeModal(overlayId) {
+  const ov = getEl(overlayId);
+  if (!ov || !ov.classList.contains('show')) return;
+  if (prefersReducedMotion()) {
+    ov.classList.remove('show', 'closing');
+    return;
+  }
+  ov.classList.add('closing');
+  window.setTimeout(() => ov.classList.remove('show', 'closing'), MODAL_ANIMATION_MS);
+}
 
 let _confirmCallback = null;
 
@@ -11,13 +33,11 @@ export function askConfirm(message, onConfirm){
   const msgEl = getEl('confirmMessage');
   if(msgEl) msgEl.textContent = message;
   _confirmCallback = onConfirm;
-  const ov = getEl('confirmOverlay');
-  if(ov) ov.classList.add('show');
+  openModal('confirmOverlay');
 }
 
 export function closeConfirm(){
-  const ov = getEl('confirmOverlay');
-  if(ov) ov.classList.remove('show');
+  closeModal('confirmOverlay');
   _confirmCallback = null;
 }
 
@@ -42,9 +62,10 @@ export function flashStatus(msg){
 // ---- wiring (module is deferred, so the DOM is already parsed) ----
 
 // click-outside-to-close for all overlays
-['taskModalOverlay', 'libModalOverlay', 'workflowModalOverlay', 'lanesModalOverlay', 'confirmOverlay'].forEach(id=>{
+['taskModalOverlay', 'libModalOverlay', 'workflowModalOverlay', 'lanesModalOverlay',
+ 'libViewModalOverlay', 'confirmOverlay'].forEach(id => {
   const ov = getEl(id);
-  if(ov) ov.addEventListener('click', (e)=>{ if(e.target === ov) ov.classList.remove('show'); });
+  if (ov) ov.addEventListener('click', (e) => { if (e.target === ov) closeModal(id); });
 });
 
 // confirm dialog buttons

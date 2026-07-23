@@ -3,7 +3,8 @@
 // Each cell (laneId × colId) is independently droppable and has a "+ add" button.
 // Imports only from ./modal.js; receives ctx (no circular import with app.js).
 
-import { askConfirm, showToast, flashStatus } from './modal.js';
+import { askConfirm, showToast, flashStatus, openModal, closeModal } from './modal.js';
+import { mountAttachments } from './attachments.js';
 
 function getEl(id) { return document.getElementById(id); }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -247,14 +248,15 @@ export function openTaskModal(id, defaultColumn, ctx, defaultLane) {
     if (delBtn) delBtn.style.display = 'none';
   }
 
-  const ov = getEl('taskModalOverlay');
-  if (ov) ov.classList.add('show');
+  const attachmentsContainer = getEl('taskAttachments');
+  if (attachmentsContainer) mountAttachments(attachmentsContainer, 'task', id || null);
+
+  openModal('taskModalOverlay');
   getEl('f-title')?.focus();
 }
 
 export function closeTaskModal(ctx) {
-  const ov = getEl('taskModalOverlay');
-  if (ov) ov.classList.remove('show');
+  closeModal('taskModalOverlay');
   if (ctx && ctx.state) ctx.state.currentTaskId = null;
 }
 

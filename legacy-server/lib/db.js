@@ -10,6 +10,18 @@ const prismaCliPath = require.resolve('prisma/build/index.js');
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const DATA_DIR = path.resolve(process.env.DATA_DIR || './data');
 const DB_PATH = path.join(DATA_DIR, 'dev.db');
+const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
+
+// Best-effort removal of on-disk attachment files. Prisma's onDelete: Cascade
+// removes the Attachment rows, but never the files themselves — callers that
+// delete tasks/entries/boards must invoke this AFTER the DB transaction
+// commits (disk I/O is not transactional; a failed unlink must not roll back
+// the delete).
+async function deleteAttachmentFiles(attachments) {
+  await Promise.allSettled(
+    (attachments || []).map((a) => fsp.unlink(path.join(ATTACHMENTS_DIR, a.storedName)).catch(() => {}))
+  );
+}
 // Use an absolute `file:` URL (forward slashes) so Prisma resolves the SQLite
 // path against the actual DATA_DIR rather than the schema directory (prisma/).
 // A relative `file:./...` URL is resolved by Prisma relative to the schema
@@ -38,6 +50,10 @@ function mapDbTask(task) {
   };
 }
 
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
 async function ensureDbDir() {
   await fsp.mkdir(DATA_DIR, { recursive: true });
 }
@@ -45,6 +61,12 @@ async function ensureDbDir() {
 async function ensureDbInitialized() {
   if (dbInitialized) return;
   await ensureDbDir();
+
+  // Prisma's SQLite migration command needs the database file to exist before
+  // it probes the datasource. Opening in append mode creates it without
+  // changing an existing database.
+  const dbFile = await fsp.open(DB_PATH, 'a');
+  await dbFile.close();
 
   const prismaSchemaPath = path.join(PROJECT_ROOT, 'prisma', 'schema.prisma');
 
@@ -69,10 +91,11 @@ async function writeLegacyJsonFile(fileName, data) {
   await fsp.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
 }
 
-module.exports = {
+  module.exports = {
   prisma,
   DATA_DIR,
   DB_PATH,
+  ATTACHMENTS_DIR,
   async getAllTasks() {
     return withDbDir(async () => {
       const tasks = await prisma.task.findMany();
@@ -102,15 +125,20 @@ module.exports = {
         createdAt: t.createdAt,
         updatedAt: t.updatedAt
       }));
+      let orphanedAttachments = [];
       await prisma.$transaction(async (tx) => {
         const incomingIds = new Set(rows.map((r) => r.id));
         const existing = await tx.task.findMany({ where: { boardId } });
         const toDelete = existing.map((e) => e.id).filter((id) => !incomingIds.has(id));
-        if (toDelete.length) await tx.task.deleteMany({ where: { id: { in: toDelete } } });
+        if (toDelete.length) {
+          orphanedAttachments = await tx.attachment.findMany({ where: { taskId: { in: toDelete } } });
+          await tx.task.deleteMany({ where: { id: { in: toDelete } } });
+        }
         for (const r of rows) {
           await tx.task.upsert({ where: { id: r.id }, create: r, update: r });
         }
       });
+      await deleteAttachmentFiles(orphanedAttachments);
       await writeLegacyJsonFile('tasks.json', (tasks || []).map((t) => ({ ...t, boardId: t.boardId || boardId || 'default' })));
     });
   },
@@ -131,15 +159,20 @@ module.exports = {
         createdAt: t.createdAt,
         updatedAt: t.updatedAt
       }));
+      let orphanedAttachments = [];
       await prisma.$transaction(async (tx) => {
         const incomingIds = new Set(rows.map((r) => r.id));
         const existing = await tx.task.findMany();
         const toDelete = existing.map((e) => e.id).filter((id) => !incomingIds.has(id));
-        if (toDelete.length) await tx.task.deleteMany({ where: { id: { in: toDelete } } });
+        if (toDelete.length) {
+          orphanedAttachments = await tx.attachment.findMany({ where: { taskId: { in: toDelete } } });
+          await tx.task.deleteMany({ where: { id: { in: toDelete } } });
+        }
         for (const r of rows) {
           await tx.task.upsert({ where: { id: r.id }, create: r, update: r });
         }
       });
+      await deleteAttachmentFiles(orphanedAttachments);
       await writeLegacyJsonFile('tasks.json', (tasks || []).map((t) => ({ ...t, boardId: t.boardId || 'default' })));
     });
   },
@@ -167,9 +200,41 @@ module.exports = {
     return withDbDir(async () => prisma.board.update({ where: { id: boardId }, data }));
   },
   async deleteBoardCascade(boardId) {
-    return withDbDir(async () => prisma.board.delete({ where: { id: boardId } }));
+    return withDbDir(async () => {
+      const tasks = await prisma.task.findMany({ where: { boardId }, select: { id: true } });
+      const taskIds = tasks.map((t) => t.id);
+      const orphanedAttachments = taskIds.length
+        ? await prisma.attachment.findMany({ where: { taskId: { in: taskIds } } })
+        : [];
+      await prisma.board.delete({ where: { id: boardId } });
+      await deleteAttachmentFiles(orphanedAttachments);
+    });
   },
-  async createBoardBundle({ board, workflow, lanes, tasks }) {
+  async createAttachment(data) {
+    return withDbDir(async () => {
+      await fsp.mkdir(ATTACHMENTS_DIR, { recursive: true });
+      return prisma.attachment.create({ data });
+    });
+  },
+  async getAttachmentsForTask(taskId) {
+    return withDbDir(async () => prisma.attachment.findMany({ where: { taskId }, orderBy: { createdAt: 'asc' } }));
+  },
+  async getAttachmentsForLibraryEntry(libraryEntryId) {
+    return withDbDir(async () => prisma.attachment.findMany({ where: { libraryEntryId }, orderBy: { createdAt: 'asc' } }));
+  },
+  async getAttachmentById(id) {
+    return withDbDir(async () => prisma.attachment.findUnique({ where: { id } }));
+  },
+  async deleteAttachment(id) {
+    return withDbDir(async () => {
+      const attachment = await prisma.attachment.findUnique({ where: { id } });
+      if (!attachment) return null;
+      await prisma.attachment.delete({ where: { id } });
+      await deleteAttachmentFiles([attachment]);
+      return attachment;
+    });
+  },
+  async createBoardBundle({ board, workflow, lanes, tasks, libraryEntries = [], taskLibraryLinks = [] }) {
     return withDbDir(async () => {
       const created = await prisma.$transaction(async (tx) => {
         const newBoard = await tx.board.create({ data: board });
@@ -180,10 +245,32 @@ module.exports = {
             data: tasks.map((t) => ({ ...t, tags: JSON.stringify(t.tags || []) }))
           });
         }
+
+        const resolvedLibraryIds = [];
+        for (const entry of libraryEntries) {
+          const existing = await tx.libraryEntry.findFirst({ where: entry });
+          if (existing) {
+            resolvedLibraryIds.push(existing.id);
+          } else {
+            const id = uid();
+            await tx.libraryEntry.create({
+              data: { id, createdAt: board.createdAt, updatedAt: board.createdAt, ...entry }
+            });
+            resolvedLibraryIds.push(id);
+          }
+        }
+
+        const linkRows = [];
+        tasks.forEach((task, i) => {
+          (taskLibraryLinks[i] || []).forEach((libIndex) => {
+            linkRows.push({ entryId: resolvedLibraryIds[libIndex], taskId: task.id });
+          });
+        });
+        if (linkRows.length) await tx.libraryEntryTask.createMany({ data: linkRows });
+
         return newBoard;
       });
-      // Mirror boards.json / tasks.json only — matches the existing pattern where
-      // per-board saves don't write workflow.json / lanes.json mirrors either.
+
       const [allBoards, allTasksRaw] = await Promise.all([
         prisma.board.findMany(),
         prisma.task.findMany()
@@ -292,11 +379,15 @@ module.exports = {
         createdAt: e.createdAt,
         updatedAt: e.updatedAt
       }));
+      let orphanedAttachments = [];
       await prisma.$transaction(async (tx) => {
         const incomingIds = new Set(rows.map((r) => r.id));
         const existing = await tx.libraryEntry.findMany();
         const toDelete = existing.map((e) => e.id).filter((id) => !incomingIds.has(id));
-        if (toDelete.length) await tx.libraryEntry.deleteMany({ where: { id: { in: toDelete } } });
+        if (toDelete.length) {
+          orphanedAttachments = await tx.attachment.findMany({ where: { libraryEntryId: { in: toDelete } } });
+          await tx.libraryEntry.deleteMany({ where: { id: { in: toDelete } } });
+        }
         for (const r of rows) {
           await tx.libraryEntry.upsert({ where: { id: r.id }, create: r, update: r });
         }
@@ -320,6 +411,7 @@ module.exports = {
           }
         }
       });
+      await deleteAttachmentFiles(orphanedAttachments);
       await writeLegacyJsonFile('library.json', entries);
     });
   }

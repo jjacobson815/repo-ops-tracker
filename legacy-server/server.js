@@ -2,7 +2,10 @@
 
 const path = require('path');
 const express = require('express');
+const multer = require('multer');
+const fsp = require('fs/promises');
 const db = require('./lib/db');
+const { BoardGenerationError, generateBoardDraft } = require('./lib/board-generator');
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -10,6 +13,21 @@ app.use(express.json({ limit: '5mb' }));
 // Resolve data directory (absolute). Defaults to ./data relative to cwd.
 const DATA_DIR = path.resolve(process.env.DATA_DIR || './data');
 const PORT = process.env.PORT || 8787;
+
+// ---------- file attachments (multer) ----------
+const MAX_ATTACHMENT_MB = process.env.MAX_ATTACHMENT_MB ? Number(process.env.MAX_ATTACHMENT_MB) : 25;
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: async (req, file, cb) => {
+      try {
+        await fsp.mkdir(db.ATTACHMENTS_DIR, { recursive: true });
+        cb(null, db.ATTACHMENTS_DIR);
+      } catch (err) { cb(err); }
+    },
+    filename: (req, file, cb) => cb(null, uid() + path.extname(file.originalname || ''))
+  }),
+  limits: { fileSize: MAX_ATTACHMENT_MB * 1024 * 1024 }
+});
 
 // ---------- helpers ----------
 function uid() {
@@ -123,13 +141,31 @@ function validImportLanes(arr) {
   );
 }
 
-function validImportTasks(arr, workflowLen, lanesLen) {
+function validImportLibrary(arr) {
+  return arr === undefined || (Array.isArray(arr) && arr.every((e) =>
+    e && typeof e === 'object'
+    && typeof e.title === 'string' && e.title.trim().length > 0
+    && typeof e.category === 'string'
+    && typeof e.body === 'string'
+    && (e.type === undefined || typeof e.type === 'string')
+    && (e.lang === undefined || e.lang === null || typeof e.lang === 'string')
+  ));
+}
+
+function validImportTasks(arr, workflowLen, lanesLen, libraryLen) {
   return Array.isArray(arr) && arr.every((t) =>
     t && typeof t === 'object'
     && typeof t.title === 'string' && t.title.trim().length > 0
     && Number.isInteger(t.columnIndex) && t.columnIndex >= 0 && t.columnIndex < workflowLen
     && Number.isInteger(t.laneIndex) && t.laneIndex >= 0 && t.laneIndex < lanesLen
     && (t.tags === undefined || (Array.isArray(t.tags) && t.tags.every((x) => typeof x === 'string')))
+    && (t.libraryIndexes === undefined || (Array.isArray(t.libraryIndexes)
+        && t.libraryIndexes.every((n) => Number.isInteger(n) && n >= 0 && n < libraryLen)))
+    && (t.linkedInstructions === undefined || (Array.isArray(t.linkedInstructions)
+        && t.linkedInstructions.every((e) => e && typeof e.title === 'string' && e.title.trim().length > 0
+          && typeof e.category === 'string' && typeof e.body === 'string'
+          && (e.type === undefined || typeof e.type === 'string')
+          && (e.lang === undefined || e.lang === null || typeof e.lang === 'string'))))
   );
 }
 
@@ -291,6 +327,26 @@ app.post('/api/boards', async (req, res) => {
   }
 });
 
+// Draft generation never writes data. The reviewed bundle is persisted only by
+// POST /api/boards/import below, which retains server-generated ids and its
+// existing transactional validation behavior.
+app.post('/api/boards/generate', async (req, res) => {
+  try {
+    const draft = await generateBoardDraft(req.body);
+    const bundle = draft.bundle;
+    if (!bundle || !validImportWorkflow(bundle.workflow) || !validImportLanes(bundle.lanes)
+      || !Array.isArray(bundle.library) || !validImportLibrary(bundle.library) || !validImportTasks(bundle.tasks, bundle.workflow.length, bundle.lanes.length, bundle.library.length)
+      || !bundle.board || typeof bundle.board.title !== 'string' || !bundle.board.title.trim() || bundle.board.title.trim().length > 200) {
+      return res.status(502).json({ error: 'AI provider returned an invalid board draft', code: 'invalid_provider_output' });
+    }
+    res.status(200).json({ bundle, generation: { provider: draft.provider, model: draft.model } });
+  } catch (err) {
+    if (err instanceof BoardGenerationError) return res.status(err.status).json({ error: err.message, code: err.code });
+    console.error('POST /api/boards/generate failed:', err.message);
+    res.status(500).json({ error: 'Failed to generate board draft', code: 'generation_failed' });
+  }
+});
+
 app.post('/api/boards/import', async (req, res) => {
   try {
     const body = req.body || {};
@@ -298,6 +354,7 @@ app.post('/api/boards/import', async (req, res) => {
     const workflowIn = body.workflow;
     const lanesIn = body.lanes;
     const tasksIn = Array.isArray(body.tasks) ? body.tasks : [];
+    const libraryIn = Array.isArray(body.library) ? body.library : [];
 
     if (!boardIn || typeof boardIn.title !== 'string'
         || boardIn.title.trim().length === 0 || boardIn.title.trim().length > 200) {
@@ -309,8 +366,11 @@ app.post('/api/boards/import', async (req, res) => {
     if (!validImportLanes(lanesIn)) {
       return res.status(400).json({ error: 'lanes must be a non-empty array of {label, accent}' });
     }
-    if (!validImportTasks(tasksIn, workflowIn.length, lanesIn.length)) {
-      return res.status(400).json({ error: 'a task is invalid or has an out-of-range columnIndex/laneIndex' });
+    if (!validImportLibrary(libraryIn)) {
+      return res.status(400).json({ error: 'library entries are invalid' });
+    }
+    if (!validImportTasks(tasksIn, workflowIn.length, lanesIn.length, libraryIn.length)) {
+      return res.status(400).json({ error: 'a task is invalid or has an out-of-range columnIndex/laneIndex/libraryIndexes entry' });
     }
 
     const boardId = uid();
@@ -354,7 +414,54 @@ app.post('/api/boards/import', async (req, res) => {
       return res.status(500).json({ error: 'internal board construction error' });
     }
 
-    await db.createBoardBundle({ board, workflow, lanes, tasks });
+    // A task may carry its linked instructions inline (as full objects) via
+    // `linkedInstructions`, or reference the top-level `library` array by index
+    // via `libraryIndexes` (legacy/compact form). Merge every linked instruction
+    // object into one deduplicated library set and resolve each task's links to
+    // indices into that set so createBoardBundle can persist them.
+    const libraryEntries = libraryIn.map((e) => ({
+      title: e.title.trim(),
+      category: typeof e.category === 'string' ? e.category : '',
+      body: typeof e.body === 'string' ? e.body : '',
+      type: typeof e.type === 'string' ? e.type : 'instruction',
+      lang: typeof e.lang === 'string' ? e.lang : null
+    }));
+
+    const libKey = (e) => `${e.type || 'instruction'}|${e.lang || ''}|${e.title}|${e.category}|${e.body}`;
+    const combinedLibrary = libraryEntries.slice();
+    const libIndexByKey = new Map(combinedLibrary.map((e, i) => [libKey(e), i]));
+    function resolveLibIndex(e) {
+      const key = libKey(e);
+      if (libIndexByKey.has(key)) return libIndexByKey.get(key);
+      const idx = combinedLibrary.length;
+      combinedLibrary.push({
+        title: String(e.title || '').trim(),
+        category: typeof e.category === 'string' ? e.category : '',
+        body: typeof e.body === 'string' ? e.body : '',
+        type: typeof e.type === 'string' ? e.type : 'instruction',
+        lang: typeof e.lang === 'string' ? e.lang : null
+      });
+      libIndexByKey.set(key, idx);
+      return idx;
+    }
+
+    const taskLibraryLinks = tasksIn.map((t) => {
+      const links = [];
+      if (Array.isArray(t.linkedInstructions) && t.linkedInstructions.length) {
+        for (const e of t.linkedInstructions) {
+          if (e && typeof e.title === 'string' && e.title.trim().length > 0) {
+            links.push(resolveLibIndex(e));
+          }
+        }
+      } else if (Array.isArray(t.libraryIndexes)) {
+        for (const i of t.libraryIndexes) {
+          if (Number.isInteger(i) && i >= 0 && i < libraryIn.length) links.push(i);
+        }
+      }
+      return links;
+    });
+
+    await db.createBoardBundle({ board, workflow, lanes, tasks, libraryEntries: combinedLibrary, taskLibraryLinks });
     res.status(201).json({ ok: true, boardId });
   } catch (err) {
     console.error('POST /api/boards/import failed:', err.message);
@@ -610,6 +717,97 @@ app.post('/api/lanes/delete', async (req, res) => {
     console.error('POST /api/lanes/delete failed:', err.message);
     res.status(500).json({ error: 'Failed to delete lane' });
   }
+});
+
+// ---------- attachment routes ----------
+app.get('/api/tasks/:taskId/attachments', async (req, res) => {
+  try {
+    res.json(await db.getAttachmentsForTask(req.params.taskId));
+  } catch (err) {
+    console.error('GET /api/tasks/:taskId/attachments failed:', err.message);
+    res.status(500).json({ error: 'Failed to read attachments' });
+  }
+});
+
+app.post('/api/tasks/:taskId/attachments', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file is required' });
+    const attachment = await db.createAttachment({
+      id: uid(),
+      filename: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      storedName: req.file.filename,
+      taskId: req.params.taskId,
+      createdAt: nowIso()
+    });
+    res.status(201).json(attachment);
+  } catch (err) {
+    console.error('POST /api/tasks/:taskId/attachments failed:', err.message);
+    res.status(500).json({ error: 'Failed to save attachment' });
+  }
+});
+
+app.get('/api/library/:entryId/attachments', async (req, res) => {
+  try {
+    res.json(await db.getAttachmentsForLibraryEntry(req.params.entryId));
+  } catch (err) {
+    console.error('GET /api/library/:entryId/attachments failed:', err.message);
+    res.status(500).json({ error: 'Failed to read attachments' });
+  }
+});
+
+app.post('/api/library/:entryId/attachments', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file is required' });
+    const attachment = await db.createAttachment({
+      id: uid(),
+      filename: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      storedName: req.file.filename,
+      libraryEntryId: req.params.entryId,
+      createdAt: nowIso()
+    });
+    res.status(201).json(attachment);
+  } catch (err) {
+    console.error('POST /api/library/:entryId/attachments failed:', err.message);
+    res.status(500).json({ error: 'Failed to save attachment' });
+  }
+});
+
+app.get('/api/attachments/:id/download', async (req, res) => {
+  try {
+    const attachment = await db.getAttachmentById(req.params.id);
+    if (!attachment) return res.status(404).json({ error: 'Attachment not found' });
+    res.download(path.join(db.ATTACHMENTS_DIR, attachment.storedName), attachment.filename, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'File missing on disk' });
+    });
+  } catch (err) {
+    console.error('GET /api/attachments/:id/download failed:', err.message);
+    res.status(500).json({ error: 'Failed to download attachment' });
+  }
+});
+
+app.delete('/api/attachments/:id', async (req, res) => {
+  try {
+    const deleted = await db.deleteAttachment(req.params.id);
+    if (!deleted) return res.status(404).json({ error: 'Attachment not found' });
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('DELETE /api/attachments/:id failed:', err.message);
+    res.status(500).json({ error: 'Failed to delete attachment' });
+  }
+});
+
+// Multer / generic error handler — must be registered last (4-arg signature).
+// Returns 413 for file-size limits so oversized uploads are cleanly rejected
+// (otherwise multer's error would fall through to Express's 500 default).
+app.use((err, req, res, next) => {
+  if (!err) return next();
+  const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : (err.status || 500);
+  console.error('Unhandled request error:', err.message);
+  if (!res.headersSent) res.status(status).json({ error: err.message || 'Request failed' });
 });
 
 // Serve static frontend (public/) — created in a later phase.

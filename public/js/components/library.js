@@ -2,7 +2,8 @@
 // Migrated from the single-file index.html renderLibrary / library modal.
 // Imports only from ./modal.js; receives ctx (no circular import with app.js).
 
-import { askConfirm, showToast } from './modal.js';
+import { askConfirm, showToast, openModal, closeModal } from './modal.js';
+import { mountAttachments } from './attachments.js';
 
 function getEl(id){ return document.getElementById(id); }
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -37,6 +38,17 @@ function wireStatic(){
     const langField = getEl('l-lang-field');
     if(langField) langField.style.display = typeSel.value === 'snippet' ? 'block' : 'none';
   });
+  // Part B: library view modal (read-only markdown popover) static handlers
+  getEl('libViewCloseBtn')?.addEventListener('click', closeLibViewModal);
+  getEl('libViewCopyBtn')?.addEventListener('click', () => {
+    const id = ctxRef?.state?.currentLibViewId;
+    if (id) copyLibBody(id, ctxRef);
+  });
+  getEl('libViewEditBtn')?.addEventListener('click', () => {
+    const id = ctxRef?.state?.currentLibViewId;
+    closeLibViewModal();
+    if (id) openLibModal(id, ctxRef);
+  });
 }
 
 export function renderLibrary(state, ctx){
@@ -67,7 +79,7 @@ export function renderLibrary(state, ctx){
       return t ? `<span class="lib-task-chip" data-task="${t.id}">${escapeHtml(t.title)}</span>` : '';
     }).join('');
     return `
-    <div class="lib-card">
+    <div class="lib-card" data-id="${i.id}">
       <div class="cat">${escapeHtml(i.category)}${i.type==='snippet' ? ` · ${escapeHtml(i.lang||'snippet')}` : ''}</div>
       <div class="title">${escapeHtml(i.title)}</div>
       <div class="body-preview">${escapeHtml(i.body)}</div>
@@ -91,6 +103,34 @@ export function renderLibrary(state, ctx){
       if(ctx.goToTask) ctx.goToTask(chip.dataset.task);
     });
   });
+  grid.querySelectorAll('.lib-card').forEach(cardEl => {
+    cardEl.addEventListener('click', (ev) => {
+      if (ev.target.closest('.lib-actions, .lib-task-chips')) return;
+      openLibViewModal(cardEl.dataset.id, ctx);
+    });
+  });
+}
+
+// ---- Part B: read-only markdown popover ----
+
+function renderMarkdown(body) {
+  const raw = window.marked ? window.marked.parse(body || '') : escapeHtml(body || '');
+  return window.DOMPurify ? window.DOMPurify.sanitize(raw) : escapeHtml(body || '');
+}
+
+export function openLibViewModal(id, ctx) {
+  const i = ctx.state.library.find(x => x.id === id);
+  if (!i) return;
+  ctx.state.currentLibViewId = id;
+  getEl('libViewCat').textContent = `${i.category}${i.type === 'snippet' ? ' · ' + (i.lang || 'snippet') : ''}`;
+  getEl('libViewTitle').textContent = i.title;
+  getEl('libViewBody').innerHTML = renderMarkdown(i.body);
+  mountAttachments(getEl('libViewAttachments'), 'library', id, { readOnly: true });
+  getEl('libViewModalOverlay')?.classList.add('show');
+}
+
+export function closeLibViewModal() {
+  getEl('libViewModalOverlay')?.classList.remove('show');
 }
 
 export function openLibModal(id, ctx){
@@ -133,14 +173,14 @@ export function openLibModal(id, ctx){
     const delBtn = getEl('libDeleteBtn');
     if(delBtn) delBtn.style.display = 'none';
   }
-  const ov = getEl('libModalOverlay');
-  if(ov) ov.classList.add('show');
+  const attachmentsContainer = getEl('libAttachments');
+  if (attachmentsContainer) mountAttachments(attachmentsContainer, 'library', id || null);
+  openModal('libModalOverlay');
   getEl('l-title')?.focus();
 }
 
 export function closeLibModal(ctx){
-  const ov = getEl('libModalOverlay');
-  if(ov) ov.classList.remove('show');
+  closeModal('libModalOverlay');
   if(ctx && ctx.state) ctx.state.currentLibId = null;
 }
 

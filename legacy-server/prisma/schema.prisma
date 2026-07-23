@@ -38,7 +38,7 @@ model Lane {
   sortOrder Int
 }
 
-model Task {
+  model Task {
   id          String   @id
   title       String
   repoName    String   @default("")
@@ -54,9 +54,10 @@ model Task {
   createdAt   String
   updatedAt   String
   taskLinks   LibraryEntryTask[]
+  attachments Attachment[]
 }
 
-model LibraryEntry {
+  model LibraryEntry {
   id        String   @id
   type      String   @default("instruction")
   lang      String?
@@ -66,6 +67,20 @@ model LibraryEntry {
   createdAt String
   updatedAt String
   taskLinks LibraryEntryTask[]
+  attachments Attachment[]
+}
+
+model Attachment {
+  id             String        @id
+  filename       String
+  mimeType       String
+  size           Int
+  storedName     String
+  taskId         String?
+  task           Task?         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  libraryEntryId String?
+  libraryEntry   LibraryEntry? @relation(fields: [libraryEntryId], references: [id], onDelete: Cascade)
+  createdAt      String
 }
 
 model LibraryEntryTask {

@@ -18,9 +18,9 @@
     <button class="tab-btn active" data-tab="dashboard">dashboard</button>
     <button class="tab-btn" data-tab="board">board</button>
     <button class="tab-btn" data-tab="library">instructions</button>
+    <button class="tab-btn" data-tab="manage-boards">manage boards</button>
   </div>
   <div class="top-actions">
-    <button class="btn ghost" id="manageBoardsBtn">manage boards</button>
     <select id="boardSelector" class="board-selector"></select>
     <span id="statusPill" class="status-pill">saved</span>
   </div>
@@ -108,12 +108,12 @@
   </div>
 </div>
 
-<!-- BOARDS MODAL -->
-<div class="modal-overlay" id="boardsModalOverlay">
-  <div class="modal">
+<!-- MANAGE BOARDS -->
+<div class="view" id="view-manage-boards">
+  <div class="manage-boards-content">
     <h2>manage boards</h2>
     <p class="modal-help">Each board has its own lanes, workflow, and cards. Export a board to back it up or share it; import a JSON export to recreate it as a new board.</p>
-    <div id="boardsList" class="workflow-state-list"></div>
+    <div id="boardsList" class="workflow-state-list manage-boards-list"></div>
     <div id="boardDeletePanel" class="workflow-delete-panel" hidden>
       <div id="boardDeleteMessage" class="modal-help"></div>
       <div class="modal-actions">
@@ -121,14 +121,41 @@
         <button class="btn danger" id="confirmDeleteBoardBtn">delete board</button>
       </div>
     </div>
-    <div class="workflow-add">
+    <div class="workflow-add manage-boards-create">
+      <h3>new board</h3>
       <div class="field"><label>new board title</label><input id="newBoardTitle" type="text" maxlength="200" placeholder="e.g. Trace Extractor — Live Validation"></div>
       <div class="field"><label>description</label><input id="newBoardDescription" type="text" maxlength="500" placeholder="optional"></div>
       <button class="btn primary" id="addBoardBtn">+ new board</button>
     </div>
-    <div class="workflow-add">
+    <div class="workflow-add manage-boards-import">
+      <h3>import from JSON</h3>
       <input type="file" id="importBoardFile" accept="application/json,.json" hidden>
       <button class="btn ghost" id="importBoardBtn">+ import board from JSON</button>
+    </div>
+    <div class="workflow-add manage-boards-pob-sync">
+      <h3>PoB → Qt Port plan sync</h3>
+      <p class="modal-help">Pulls the latest PathOfBuilding Qt-port plan (a scheduled task regenerates it every 30 min) into this browser's boards, in place. First click also turns on background auto-refresh (checks every 5 min while this tab is open) so you don't need to click again. Boards this touches become a live mirror — manual edits on them get overwritten on the next sync.</p>
+      <div class="modal-actions">
+        <button class="btn ghost" id="pobPlanSyncBtn">sync PoB plan now</button>
+        <span class="modal-help" id="pobPlanSyncStatus" aria-live="polite"></span>
+      </div>
+    </div>
+    <div class="workflow-add manage-boards-ai" id="aiBoardBrief">
+      <h3>create with AI</h3>
+      <div class="field"><label>create with AI</label><input id="aiBoardGoal" type="text" maxlength="2000" placeholder="What board do you need?" aria-label="Board goal"></div>
+      <div class="field"><label>description</label><textarea id="aiBoardDescription" maxlength="2000" rows="9" placeholder="Context for this board"></textarea></div>
+      <div class="field-row">
+        <div class="field"><label>workflow hint</label><input id="aiBoardWorkflowHint" maxlength="500" placeholder="e.g. backlog, build, done"></div>
+        <div class="field"><label>lane hint</label><input id="aiBoardLanesHint" maxlength="500" placeholder="e.g. frontend, backend"></div>
+        <div class="field"><label>task count</label><input id="aiBoardTaskCount" type="number" min="1" max="50" value="6"></div>
+      </div>
+      <div class="field"><label>constraints</label><textarea id="aiBoardConstraints" maxlength="2000" rows="6" placeholder="Dependencies, priorities, or delivery constraints"></textarea></div>
+      <div class="modal-actions"><button class="btn primary" id="generateBoardBtn">generate draft</button><span class="modal-help" id="aiBoardStatus" aria-live="polite"></span></div>
+    </div>
+    <div class="workflow-delete-panel" id="aiBoardPreview" hidden>
+      <p class="modal-help">Review and edit the generated board bundle before creating it. Nothing has been saved yet.</p>
+      <div class="field"><label>board draft (JSON)</label><textarea id="aiBoardDraft" rows="16" spellcheck="false" aria-label="Generated board draft"></textarea></div>
+      <div class="modal-actions"><button class="btn ghost" id="cancelAiBoardBtn">discard draft</button><button class="btn primary" id="createAiBoardBtn">create reviewed board</button></div>
     </div>
     <div class="modal-actions" style="justify-content:flex-end;">
       <button class="btn ghost" id="boardsCloseBtn">done</button>
@@ -174,6 +201,7 @@
     <div class="field" id="f-agent-custom-wrap" style="display:none;"><label>agent (custom)</label><input id="f-agent-custom" type="text" placeholder="e.g. local Llama build"></div>
     <div class="field"><label>tags (comma separated)</label><input id="f-tags" type="text" placeholder="docs-gen, build, api"></div>
     <div class="field"><label>notes / instructions used</label><textarea id="f-notes" placeholder="what you told the agent, findings, blockers..."></textarea></div>
+    <div class="field"><label>attachments</label><div class="attachments-field" id="taskAttachments"></div></div>
     <div class="modal-actions">
       <div><button class="btn danger" id="taskDeleteBtn" style="display:none;">delete</button></div>
       <div class="right">
@@ -211,9 +239,10 @@
     </div>
     <div class="field"><label>prompt / instructions</label><textarea id="l-body" style="min-height:160px;" placeholder="the actual text you paste to the agent..."></textarea></div>
     <div class="field">
-      <label>linked tasks</label>
+      <label>linked tasks <span class="hint">(optional — pick only the tasks this instruction applies to; none = unlinked)</span></label>
       <select id="l-tasks" multiple size="4"></select>
     </div>
+    <div class="field"><label>attachments</label><div class="attachments-field" id="libAttachments"></div></div>
     <div class="modal-actions">
       <div><button class="btn danger" id="libDeleteBtn" style="display:none;">delete</button></div>
       <div class="right">
@@ -240,6 +269,29 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- LIBRARY VIEW MODAL (read-only, markdown-rendered) -->
+<div class="modal-overlay" id="libViewModalOverlay">
+  <div class="modal modal-wide">
+    <div class="lib-view-header">
+      <div>
+        <div class="cat" id="libViewCat"></div>
+        <h2 id="libViewTitle"></h2>
+      </div>
+      <div class="right">
+        <button class="btn ghost" id="libViewCopyBtn">copy</button>
+        <button class="btn ghost" id="libViewEditBtn">edit</button>
+      </div>
+    </div>
+    <div class="lib-view-body" id="libViewBody"></div>
+    <div class="lib-view-attachments" id="libViewAttachments"></div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <button class="btn ghost" id="libViewCloseBtn">close</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/vendor/marked.min.js"></script>
+<script src="js/vendor/purify.min.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

@@ -26,5 +26,5 @@ body{
 ::selection{background:var(--teal);color:#0B0D12;}
 
 @media (prefers-reduced-motion: reduce){
-  *{transition:none !important;}
+  *{transition:none !important; animation:none !important;}
 }
