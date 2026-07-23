@@ -1,0 +1,15 @@
+{
+  "mcp": {
+    "code-review-graph": {
+      "type": "local",
+      "command": [
+        "C:\\Users\\User\\AppData\\Local\\pipx\\pipx\\venvs\\code-review-graph\\Scripts\\python.exe",
+        "-m",
+        "code_review_graph",
+        "serve",
+        "--repo",
+        "C:\\Users\\User\\source\\repos\\repo_tracker_copy\\repo-ops-tracker"
+      ]
+    }
+  }
+}

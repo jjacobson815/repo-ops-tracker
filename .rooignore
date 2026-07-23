@@ -1,0 +1,61 @@
+# Node & Prisma Dependencies / Engines / Caches
+node_modules/
+.venv/
+venv/
+dist/
+build/
+out/
+.next/
+.cache/
+
+# Data Backups, Vaults, & Graph Cache Dumps
+data/
+data.bak/
+.graphify.bak/
+new-obsidian-vault/
+dev-docs/
+.obsidian/
+.obsidian-vault/
+graphify-out/
+
+# Database Files & SQLite Instantiations
+*.sqlite
+*.sqlite-journal
+*.db
+*.db-journal
+
+# Multi-Agent Configuration Folders
+.agents/
+.claude/
+.codebuddy/
+.cursor/
+.gemini/
+.kiro/
+.qoder/
+
+# System, Git Internal Objects, & IDE Settings
+.git/
+.vscode/
+.idea/
+
+# Large Media & Archive Formats
+*.mp4
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.zip
+*.tar.gz
+*.7z
+
+# Coverage Reports & Package Lockfiles
+coverage/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Logs & Diagnostic Dumps
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
