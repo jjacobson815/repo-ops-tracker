@@ -69,3 +69,17 @@ data/migration-bundles/
 scripts/pob-plan/.profile/
 scripts/pob-plan/.browsers/
 public/pob-plan-data/
+
+# ---------------------------------------------------------------------------
+# Local JSON data store (legacy server runtime state; *.db already ignored
+# above). The source of truth is now client-side IndexedDB — never commit
+# local/dev data.
+# ---------------------------------------------------------------------------
+data/*.json
+
+# ---------------------------------------------------------------------------
+# Local scratch / debug dumps and editor backups
+# ---------------------------------------------------------------------------
+ERR
+*.diff
+*.bak
